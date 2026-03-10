@@ -1,0 +1,63 @@
+device:
+  psk: "weidian_24h"
+  product_id: "1696"
+  timeout: 10
+  heartbeat_interval: 30
+
+mqtt:
+  broker: "127.0.0.1"
+  port: 1881
+  keepalive: 60
+  qos: 1
+  allow_anonymous: true
+  use_identity_as_username: false
+  require_certificate: false
+
+mdns:
+  service_type: "_mqtt._tcp.local."
+  timeout: 5
+
+test:
+  open_duration: 5000
+  test_timeout: 30
+  retry_count: 3
+  verify_state: true
+
+printer:
+  enabled: true
+  paper_width: 50
+  paper_height: 30
+  dpi: 600
+  label_config:
+    labelWidth: 1181
+    labelHeight: 708
+    drawBorder: true
+    printBarcode: false
+    dateFormat: "yyyy/MM/dd"
+    snTextConfig:
+      x: 115
+      y: 503
+      width: 541
+      height: 67
+      fontSize: 34
+      fontFamily: "方正兰亭圆简体"
+      fontBold: true
+      alignment: "left"
+    dateConfig:
+      x: 371
+      y: 344
+      width: 283
+      height: 64
+      fontSize: 32
+      fontFamily: "方正兰亭圆简体"
+      fontBold: true
+      alignment: "left"
+    qrCodeConfig:
+      x: 740
+      y: 181
+      width: 441
+      height: 441
+      fontSize: 16
+      fontFamily: "方正兰亭圆简体"
+      fontBold: false
+      alignment: "left"
