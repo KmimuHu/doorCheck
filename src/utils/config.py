@@ -37,6 +37,14 @@ class Config:
         return value
 
     @property
+    def app_name(self) -> str:
+        return self.get('app.name', '智能门锁产测工具')
+
+    @property
+    def app_version(self) -> str:
+        return self.get('app.version', '1.0.0')
+
+    @property
     def device_psk(self) -> str:
         return self.get('device.psk', 'weidian_24h')
 
