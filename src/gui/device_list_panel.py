@@ -22,29 +22,33 @@ class DeviceCard(QFrame):
         self.setFrameStyle(QFrame.Box | QFrame.Raised)
         self.setLineWidth(2)
         self.setCursor(Qt.PointingHandCursor)
-        self.setFixedHeight(120)
+        self.setMinimumHeight(80)
 
         layout = QVBoxLayout()
-        layout.setContentsMargins(10, 10, 10, 10)
+        layout.setContentsMargins(10, 8, 10, 8)
+        layout.setSpacing(4)
 
         sn_label = QLabel(f"SN: {self.device.get_display_name()}")
-        sn_label.setFont(QFont("Arial", 12, QFont.Bold))
-        sn_label.setStyleSheet("color: black;")
+        sn_label.setFont(QFont("Microsoft YaHei", 9))
+        sn_label.setWordWrap(True)
+        sn_label.setStyleSheet("color: #333;")
         layout.addWidget(sn_label)
 
         ip_label = QLabel(f"IP: {self.device.ip}")
-        ip_label.setFont(QFont("Arial", 10))
-        ip_label.setStyleSheet("color: black;")
+        ip_label.setFont(QFont("Microsoft YaHei", 9))
+        ip_label.setWordWrap(True)
+        ip_label.setStyleSheet("color: #333;")
         layout.addWidget(ip_label)
 
         model_label = QLabel(f"型号: {self.device.model}")
-        model_label.setFont(QFont("Arial", 10))
-        model_label.setStyleSheet("color: black;")
+        model_label.setFont(QFont("Microsoft YaHei", 9))
+        model_label.setWordWrap(True)
+        model_label.setStyleSheet("color: #333;")
         layout.addWidget(model_label)
 
         status_layout = QHBoxLayout()
         self.status_label = QLabel("状态: 未测试")
-        self.status_label.setFont(QFont("Arial", 9))
+        self.status_label.setFont(QFont("Microsoft YaHei", 8))
         self.status_label.setStyleSheet("color: #333333;")
         status_layout.addWidget(self.status_label)
 
@@ -119,7 +123,7 @@ class DeviceListPanel(QWidget):
         layout.setContentsMargins(0, 0, 0, 0)
 
         header = QLabel("设备列表")
-        header.setFont(QFont("Arial", 14, QFont.Bold))
+        header.setFont(QFont("Microsoft YaHei", 11, QFont.Bold))
         header.setStyleSheet("padding: 10px; background-color: #2196F3; color: white;")
         layout.addWidget(header)
 
@@ -134,6 +138,7 @@ class DeviceListPanel(QWidget):
                 border: none;
                 padding: 8px 16px;
                 border-radius: 4px;
+                font-family: 'Microsoft YaHei';
                 font-size: 12px;
             }
             QPushButton:hover {

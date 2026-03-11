@@ -1,8 +1,28 @@
 from PyQt5.QtWidgets import (QWidget, QVBoxLayout, QHBoxLayout, QLabel,
                              QPushButton, QTextEdit, QGroupBox, QScrollArea,
-                             QProgressBar)
+                             QProgressBar, QFrame)
 from PyQt5.QtCore import Qt, pyqtSignal
 from PyQt5.QtGui import QFont
+
+
+GROUPBOX_STYLE = """
+    QGroupBox {
+        font-family: 'Microsoft YaHei';
+        font-size: 10pt;
+        font-weight: bold;
+        border: 1px solid #dcdcdc;
+        border-radius: 6px;
+        margin-top: 12px;
+        padding: 10px 8px 8px 8px;
+        background-color: #fafafa;
+    }
+    QGroupBox::title {
+        subcontrol-origin: margin;
+        subcontrol-position: top left;
+        padding: 2px 10px;
+        color: #333;
+    }
+"""
 
 
 class TestItemWidget(QWidget):
@@ -18,19 +38,21 @@ class TestItemWidget(QWidget):
         self.init_ui()
 
     def init_ui(self):
-        layout = QHBoxLayout()
-        layout.setContentsMargins(5, 5, 5, 5)
+        layout = QVBoxLayout()
+        layout.setContentsMargins(4, 4, 4, 4)
+        layout.setSpacing(4)
 
         self.test_btn = QPushButton(self.display_name)
-        self.test_btn.setFixedWidth(100)
+        self.test_btn.setMinimumWidth(100)
         self.test_btn.setStyleSheet(f"""
             QPushButton {{
                 background-color: {self.color};
                 color: white;
                 border: none;
-                padding: 4px;
-                border-radius: 3px;
-                font-size: 10px;
+                padding: 8px 12px;
+                border-radius: 4px;
+                font-family: 'Microsoft YaHei';
+                font-size: 13px;
             }}
             QPushButton:hover {{
                 background-color: {self.hover_color};
@@ -44,16 +66,14 @@ class TestItemWidget(QWidget):
         layout.addWidget(self.test_btn)
 
         self.status_label = QLabel("未测试")
-        self.status_label.setFont(QFont("Arial", 9))
+        self.status_label.setFont(QFont("Microsoft YaHei", 8))
         self.status_label.setAlignment(Qt.AlignCenter)
-        self.status_label.setFixedWidth(60)
+        self.status_label.setStyleSheet("color: #999;")
         layout.addWidget(self.status_label)
 
+        # Hidden label kept for API compatibility
         self.message_label = QLabel("")
-        self.message_label.setFont(QFont("Arial", 8))
-        layout.addWidget(self.message_label)
-
-        layout.addStretch()
+        self.message_label.setVisible(False)
 
         self.setLayout(layout)
 
@@ -71,7 +91,10 @@ class TestItemWidget(QWidget):
             self.status_label.setText("未测试")
             self.status_label.setStyleSheet("color: #999;")
 
-        self.message_label.setText(message)
+        if message:
+            self.status_label.setToolTip(message)
+        else:
+            self.status_label.setToolTip("")
 
     def set_enabled(self, enabled: bool):
         self.test_btn.setEnabled(enabled)
@@ -94,46 +117,55 @@ class DeviceDetailPanel(QWidget):
     def init_ui(self):
         layout = QVBoxLayout()
         layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(0)
 
         header = QLabel("设备详情")
-        header.setFont(QFont("Arial", 14, QFont.Bold))
+        header.setFont(QFont("Microsoft YaHei", 11, QFont.Bold))
         header.setStyleSheet("padding: 10px; background-color: #2196F3; color: white;")
         layout.addWidget(header)
 
         scroll = QScrollArea()
         scroll.setWidgetResizable(True)
         scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+        scroll.setStyleSheet("QScrollArea { border: none; background-color: #f0f0f0; }")
 
         content_widget = QWidget()
+        content_widget.setStyleSheet("background-color: #f0f0f0;")
         content_layout = QVBoxLayout()
-        content_layout.setContentsMargins(15, 15, 15, 15)
+        content_layout.setContentsMargins(12, 12, 12, 12)
+        content_layout.setSpacing(10)
 
-        # Device info
+        # ---- Device info ----
         self.device_info_label = QLabel("请选择设备")
-        self.device_info_label.setFont(QFont("Arial", 12))
-        self.device_info_label.setStyleSheet("padding: 10px; background-color: #f5f5f5; border-radius: 5px;")
+        self.device_info_label.setFont(QFont("Microsoft YaHei", 10))
+        self.device_info_label.setStyleSheet(
+            "padding: 10px; background-color: white; border-radius: 6px; "
+            "border: 1px solid #e0e0e0; color: #333;"
+        )
         content_layout.addWidget(self.device_info_label)
 
-        # Test items group
+        # ---- Test items group ----
         test_group = QGroupBox("检测项目")
-        test_group.setFont(QFont("Arial", 11, QFont.Bold))
-        test_layout = QVBoxLayout()
-        test_layout.setSpacing(4)
+        test_group.setStyleSheet(GROUPBOX_STYLE)
+        test_layout = QHBoxLayout()
+        test_layout.setSpacing(8)
+        test_layout.setContentsMargins(8, 16, 8, 8)
 
-        # Auto-test button
-        auto_test_layout = QHBoxLayout()
-        auto_test_layout.setContentsMargins(5, 5, 5, 5)
+        # Auto-test button (vertical: button + status)
+        auto_test_container = QVBoxLayout()
+        auto_test_container.setSpacing(4)
 
         self.auto_test_btn = QPushButton("一键测试")
-        self.auto_test_btn.setFixedWidth(100)
+        self.auto_test_btn.setMinimumWidth(100)
         self.auto_test_btn.setStyleSheet("""
             QPushButton {
                 background-color: #FF5722;
                 color: white;
                 border: none;
-                padding: 4px;
-                border-radius: 3px;
-                font-size: 10px;
+                padding: 8px 12px;
+                border-radius: 4px;
+                font-family: 'Microsoft YaHei';
+                font-size: 13px;
             }
             QPushButton:hover {
                 background-color: #E64A19;
@@ -145,18 +177,22 @@ class DeviceDetailPanel(QWidget):
         """)
         self.auto_test_btn.setEnabled(False)
         self.auto_test_btn.clicked.connect(self._on_auto_test_clicked)
-        auto_test_layout.addWidget(self.auto_test_btn)
+        auto_test_container.addWidget(self.auto_test_btn)
 
         self.auto_test_status = QLabel("")
-        self.auto_test_status.setFont(QFont("Arial", 9))
+        self.auto_test_status.setFont(QFont("Microsoft YaHei", 8))
         self.auto_test_status.setAlignment(Qt.AlignCenter)
-        self.auto_test_status.setFixedWidth(60)
-        auto_test_layout.addWidget(self.auto_test_status)
+        auto_test_container.addWidget(self.auto_test_status)
 
-        auto_test_layout.addStretch()
-        test_layout.addLayout(auto_test_layout)
+        test_layout.addLayout(auto_test_container)
 
-        # Individual test items
+        # Vertical separator
+        separator = QFrame()
+        separator.setFrameShape(QFrame.VLine)
+        separator.setStyleSheet("color: #dcdcdc;")
+        test_layout.addWidget(separator)
+
+        # Individual test items (horizontal)
         self.test_widgets = {}
         test_items = [
             ("burn_mac", "烧写MAC", "#16a085", "#138d75"),
@@ -170,54 +206,56 @@ class DeviceDetailPanel(QWidget):
             test_layout.addWidget(widget)
             self.test_widgets[test_name] = widget
 
+        test_layout.addStretch()
         test_group.setLayout(test_layout)
         content_layout.addWidget(test_group)
 
-        # OTA group
+        # ---- OTA group ----
         ota_group = QGroupBox("固件升级")
-        ota_group.setFont(QFont("Arial", 11, QFont.Bold))
+        ota_group.setStyleSheet(GROUPBOX_STYLE)
         ota_layout = QVBoxLayout()
+        ota_layout.setContentsMargins(8, 16, 8, 8)
+        ota_layout.setSpacing(8)
 
-        firmware_layout = QHBoxLayout()
+        # Buttons row: [上传固件] [固件状态] [OTA升级] [OTA状态]
+        ota_btn_row = QHBoxLayout()
+        ota_btn_row.setSpacing(10)
 
         self.upload_firmware_btn = QPushButton("上传固件")
-        self.upload_firmware_btn.setFixedWidth(100)
+        self.upload_firmware_btn.setMinimumWidth(100)
         self.upload_firmware_btn.setStyleSheet("""
             QPushButton {
                 background-color: #FF9800;
                 color: white;
                 border: none;
-                padding: 4px;
-                border-radius: 3px;
-                font-size: 10px;
+                padding: 8px 12px;
+                border-radius: 4px;
+                font-family: 'Microsoft YaHei';
+                font-size: 13px;
             }
             QPushButton:hover {
                 background-color: #e68900;
             }
         """)
         self.upload_firmware_btn.clicked.connect(self.upload_firmware_clicked.emit)
-        firmware_layout.addWidget(self.upload_firmware_btn)
+        ota_btn_row.addWidget(self.upload_firmware_btn)
 
         self.firmware_status_label = QLabel("固件: 未上传")
-        self.firmware_status_label.setFont(QFont("Arial", 9))
+        self.firmware_status_label.setFont(QFont("Microsoft YaHei", 9))
         self.firmware_status_label.setStyleSheet("color: #999;")
-        firmware_layout.addWidget(self.firmware_status_label)
-
-        firmware_layout.addStretch()
-        ota_layout.addLayout(firmware_layout)
-
-        ota_btn_layout = QHBoxLayout()
+        ota_btn_row.addWidget(self.firmware_status_label)
 
         self.ota_btn = QPushButton("OTA升级")
-        self.ota_btn.setFixedWidth(100)
+        self.ota_btn.setMinimumWidth(100)
         self.ota_btn.setStyleSheet("""
             QPushButton {
                 background-color: #f39c12;
                 color: white;
                 border: none;
-                padding: 4px;
-                border-radius: 3px;
-                font-size: 10px;
+                padding: 8px 12px;
+                border-radius: 4px;
+                font-family: 'Microsoft YaHei';
+                font-size: 13px;
             }
             QPushButton:hover {
                 background-color: #e67e22;
@@ -229,15 +267,16 @@ class DeviceDetailPanel(QWidget):
         """)
         self.ota_btn.setEnabled(False)
         self.ota_btn.clicked.connect(self._on_ota_clicked)
-        ota_btn_layout.addWidget(self.ota_btn)
+        ota_btn_row.addWidget(self.ota_btn)
 
         self.ota_status_label = QLabel("")
-        self.ota_status_label.setFont(QFont("Arial", 9))
-        ota_btn_layout.addWidget(self.ota_status_label)
+        self.ota_status_label.setFont(QFont("Microsoft YaHei", 9))
+        ota_btn_row.addWidget(self.ota_status_label)
 
-        ota_btn_layout.addStretch()
-        ota_layout.addLayout(ota_btn_layout)
+        ota_btn_row.addStretch()
+        ota_layout.addLayout(ota_btn_row)
 
+        # Progress bar
         self.progress_bar = QProgressBar()
         self.progress_bar.setRange(0, 100)
         self.progress_bar.setValue(0)
@@ -264,21 +303,24 @@ class DeviceDetailPanel(QWidget):
         ota_group.setLayout(ota_layout)
         content_layout.addWidget(ota_group)
 
-        # Log group
+        # ---- Log group ----
         log_group = QGroupBox("测试日志")
-        log_group.setFont(QFont("Arial", 11, QFont.Bold))
+        log_group.setStyleSheet(GROUPBOX_STYLE)
         log_layout = QVBoxLayout()
+        log_layout.setContentsMargins(8, 16, 8, 8)
 
         self.log_text = QTextEdit()
         self.log_text.setReadOnly(True)
-        self.log_text.setFont(QFont("Courier", 8))
-        self.log_text.setMaximumHeight(200)
+        self.log_text.setFont(QFont("Consolas", 10))
+        self.log_text.setMinimumHeight(300)
         self.log_text.setStyleSheet("""
             QTextEdit {
-                background-color: #2c3e50;
-                color: #ecf0f1;
-                border: none;
+                background-color: #1e1e1e;
+                color: #d4d4d4;
+                border: 1px solid #333;
+                border-radius: 4px;
                 padding: 8px;
+                selection-background-color: #264f78;
             }
         """)
         log_layout.addWidget(self.log_text)
@@ -286,8 +328,9 @@ class DeviceDetailPanel(QWidget):
         log_group.setLayout(log_layout)
         content_layout.addWidget(log_group)
 
-        # Bottom control buttons
+        # ---- Bottom control buttons ----
         button_layout = QHBoxLayout()
+        button_layout.setSpacing(10)
 
         self.print_btn = QPushButton("打印标签")
         self.print_btn.setStyleSheet("""
@@ -297,6 +340,7 @@ class DeviceDetailPanel(QWidget):
                 border: none;
                 padding: 10px 20px;
                 border-radius: 4px;
+                font-family: 'Microsoft YaHei';
                 font-size: 12px;
             }
             QPushButton:hover {
@@ -315,6 +359,7 @@ class DeviceDetailPanel(QWidget):
                 border: none;
                 padding: 10px 20px;
                 border-radius: 4px;
+                font-family: 'Microsoft YaHei';
                 font-size: 12px;
             }
             QPushButton:hover {

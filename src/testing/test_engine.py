@@ -198,11 +198,16 @@ class TestEngine:
                     if report_callback:
                         report_callback("transition", i)
                     time.sleep(1)
+                if report_callback:
+                    report_callback("hide_dialog", 0)
 
             self._report_progress("【步骤4】测试遥控器配对")
             if not self.test_remote_pairing(pairing_duration=3000, open_timeout=8, report_callback=report_callback):
                 failed_tests.append("遥控器配对测试")
                 self._report_progress("⚠️ 遥控器配对测试失败")
+            else:
+                if report_callback:
+                    report_callback("hide_dialog", 0)
             
             if failed_tests:
                 fail_message = "以下测试项未通过: " + ", ".join(failed_tests)

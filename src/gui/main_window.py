@@ -34,12 +34,12 @@ class CountdownDialog(QDialog):
 
         self.message_label = QLabel('正在测试...')
         self.message_label.setAlignment(Qt.AlignCenter)
-        self.message_label.setFont(QFont('Arial', 12))
+        self.message_label.setFont(QFont('Microsoft YaHei', 12))
         layout.addWidget(self.message_label)
 
         self.countdown_label = QLabel('')
         self.countdown_label.setAlignment(Qt.AlignCenter)
-        self.countdown_label.setFont(QFont('Arial', 24, QFont.Bold))
+        self.countdown_label.setFont(QFont('Microsoft YaHei', 24, QFont.Bold))
         self.countdown_label.setStyleSheet('color: #f44336;')
         layout.addWidget(self.countdown_label)
 
@@ -71,6 +71,8 @@ class TestThread(QThread):
             self.countdown_signal.emit("请按遥控器配对", countdown)
         elif event_type == "open_countdown":
             self.countdown_signal.emit("请按遥控器开门", countdown)
+        elif event_type == "hide_dialog":
+            self.countdown_signal.emit("__hide__", 0)
 
     def run(self):
         self.test_engine.set_progress_callback(lambda msg: self.progress_signal.emit(msg))
@@ -265,6 +267,10 @@ class MainWindow(QMainWindow):
             QMessageBox.critical(self, '错误', f'测试启动失败: {str(e)}')
 
     def _on_countdown_update(self, message: str, countdown: int):
+        if message == "__hide__":
+            if self.countdown_dialog:
+                self.countdown_dialog.hide()
+            return
         if self.countdown_dialog:
             self.countdown_dialog.update_message(message, countdown)
             if not self.countdown_dialog.isVisible():
