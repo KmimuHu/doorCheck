@@ -353,6 +353,17 @@ class MainWindow(QMainWindow):
             test_engine = TestEngine(mqtt_client, self.config)
             test_engine.set_progress_callback(lambda msg: self.device_detail_panel.append_log(msg))
 
+            QMessageBox.information(
+                self,
+                '遥控器配对测试',
+                '即将进行遥控器配对测试\n\n'
+                '1. 门锁将上锁\n'
+                '2. 设备进入配对模式，请按遥控器配对按键\n'
+                '3. 配对完成后，请按遥控器开门按键\n'
+                '4. 系统将检测门锁是否开启\n\n'
+                '请点击确定开始测试'
+            )
+
             success = test_engine.test_remote_pairing()
 
             if success:

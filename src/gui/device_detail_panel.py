@@ -311,6 +311,7 @@ class DeviceDetailPanel(QWidget):
 
         # ---- Control buttons ----
         button_layout = QHBoxLayout()
+        button_layout.setContentsMargins(9, 0, 0, 0)
         button_layout.setSpacing(10)
 
         self.print_btn = QPushButton("打印标签")
