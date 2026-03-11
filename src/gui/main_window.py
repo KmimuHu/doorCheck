@@ -172,15 +172,15 @@ class MainWindow(QMainWindow):
         splitter = QSplitter(Qt.Horizontal)
 
         self.device_list_panel = DeviceListPanel()
-        self.device_list_panel.setMinimumWidth(350)
-        self.device_list_panel.setMaximumWidth(500)
+        self.device_list_panel.setMinimumWidth(300)
         splitter.addWidget(self.device_list_panel)
 
         self.device_detail_panel = DeviceDetailPanel()
         splitter.addWidget(self.device_detail_panel)
 
-        splitter.setStretchFactor(0, 1)
-        splitter.setStretchFactor(1, 2)
+        splitter.setStretchFactor(0, 35)
+        splitter.setStretchFactor(1, 65)
+        splitter.setSizes([490, 910])
 
         main_layout.addWidget(splitter)
         central_widget.setLayout(main_layout)

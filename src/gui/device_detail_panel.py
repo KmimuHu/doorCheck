@@ -7,9 +7,6 @@ from PyQt5.QtGui import QFont
 
 GROUPBOX_STYLE = """
     QGroupBox {
-        font-family: 'Microsoft YaHei';
-        font-size: 10pt;
-        font-weight: bold;
         border: 1px solid #dcdcdc;
         border-radius: 6px;
         margin-top: 12px;
@@ -21,6 +18,9 @@ GROUPBOX_STYLE = """
         subcontrol-position: top left;
         padding: 2px 10px;
         color: #333;
+        font-family: 'Microsoft YaHei';
+        font-size: 10pt;
+        font-weight: bold;
     }
 """
 
@@ -66,9 +66,8 @@ class TestItemWidget(QWidget):
         layout.addWidget(self.test_btn)
 
         self.status_label = QLabel("未测试")
-        self.status_label.setFont(QFont("Microsoft YaHei", 8))
+        self.status_label.setStyleSheet("font-family: 'Microsoft YaHei'; font-size: 13px; color: #999;")
         self.status_label.setAlignment(Qt.AlignCenter)
-        self.status_label.setStyleSheet("color: #999;")
         layout.addWidget(self.status_label)
 
         # Hidden label kept for API compatibility
@@ -80,16 +79,16 @@ class TestItemWidget(QWidget):
     def update_result(self, status: str, message: str = ""):
         if status == "passed":
             self.status_label.setText("✓ 通过")
-            self.status_label.setStyleSheet("color: #4caf50; font-weight: bold;")
+            self.status_label.setStyleSheet("font-family: 'Microsoft YaHei'; font-size: 13px; color: #4caf50; font-weight: bold;")
         elif status == "failed":
             self.status_label.setText("✗ 失败")
-            self.status_label.setStyleSheet("color: #f44336; font-weight: bold;")
+            self.status_label.setStyleSheet("font-family: 'Microsoft YaHei'; font-size: 13px; color: #f44336; font-weight: bold;")
         elif status == "testing":
             self.status_label.setText("⟳ 测试中")
-            self.status_label.setStyleSheet("color: #ff9800; font-weight: bold;")
+            self.status_label.setStyleSheet("font-family: 'Microsoft YaHei'; font-size: 13px; color: #ff9800; font-weight: bold;")
         else:
             self.status_label.setText("未测试")
-            self.status_label.setStyleSheet("color: #999;")
+            self.status_label.setStyleSheet("font-family: 'Microsoft YaHei'; font-size: 13px; color: #999;")
 
         if message:
             self.status_label.setToolTip(message)
@@ -132,14 +131,14 @@ class DeviceDetailPanel(QWidget):
         content_widget = QWidget()
         content_widget.setStyleSheet("background-color: #f0f0f0;")
         content_layout = QVBoxLayout()
-        content_layout.setContentsMargins(12, 12, 12, 12)
-        content_layout.setSpacing(10)
+        content_layout.setContentsMargins(12, 8, 12, 8)
+        content_layout.setSpacing(6)
 
         # ---- Device info ----
         self.device_info_label = QLabel("请选择设备")
         self.device_info_label.setFont(QFont("Microsoft YaHei", 10))
         self.device_info_label.setStyleSheet(
-            "padding: 10px; background-color: white; border-radius: 6px; "
+            "padding: 8px; background-color: white; border-radius: 6px; "
             "border: 1px solid #e0e0e0; color: #333;"
         )
         content_layout.addWidget(self.device_info_label)
@@ -180,7 +179,7 @@ class DeviceDetailPanel(QWidget):
         auto_test_container.addWidget(self.auto_test_btn)
 
         self.auto_test_status = QLabel("")
-        self.auto_test_status.setFont(QFont("Microsoft YaHei", 8))
+        self.auto_test_status.setStyleSheet("font-family: 'Microsoft YaHei'; font-size: 13px;")
         self.auto_test_status.setAlignment(Qt.AlignCenter)
         auto_test_container.addWidget(self.auto_test_status)
 
@@ -241,8 +240,7 @@ class DeviceDetailPanel(QWidget):
         ota_btn_row.addWidget(self.upload_firmware_btn)
 
         self.firmware_status_label = QLabel("固件: 未上传")
-        self.firmware_status_label.setFont(QFont("Microsoft YaHei", 9))
-        self.firmware_status_label.setStyleSheet("color: #999;")
+        self.firmware_status_label.setStyleSheet("font-family: 'Microsoft YaHei'; font-size: 13px; color: #999;")
         ota_btn_row.addWidget(self.firmware_status_label)
 
         self.ota_btn = QPushButton("OTA升级")
@@ -270,7 +268,7 @@ class DeviceDetailPanel(QWidget):
         ota_btn_row.addWidget(self.ota_btn)
 
         self.ota_status_label = QLabel("")
-        self.ota_status_label.setFont(QFont("Microsoft YaHei", 9))
+        self.ota_status_label.setStyleSheet("font-family: 'Microsoft YaHei'; font-size: 13px;")
         ota_btn_row.addWidget(self.ota_status_label)
 
         ota_btn_row.addStretch()
@@ -303,32 +301,7 @@ class DeviceDetailPanel(QWidget):
         ota_group.setLayout(ota_layout)
         content_layout.addWidget(ota_group)
 
-        # ---- Log group ----
-        log_group = QGroupBox("测试日志")
-        log_group.setStyleSheet(GROUPBOX_STYLE)
-        log_layout = QVBoxLayout()
-        log_layout.setContentsMargins(8, 16, 8, 8)
-
-        self.log_text = QTextEdit()
-        self.log_text.setReadOnly(True)
-        self.log_text.setFont(QFont("Consolas", 10))
-        self.log_text.setMinimumHeight(300)
-        self.log_text.setStyleSheet("""
-            QTextEdit {
-                background-color: #1e1e1e;
-                color: #d4d4d4;
-                border: 1px solid #333;
-                border-radius: 4px;
-                padding: 8px;
-                selection-background-color: #264f78;
-            }
-        """)
-        log_layout.addWidget(self.log_text)
-
-        log_group.setLayout(log_layout)
-        content_layout.addWidget(log_group)
-
-        # ---- Bottom control buttons ----
+        # ---- Control buttons (above log so always visible) ----
         button_layout = QHBoxLayout()
         button_layout.setSpacing(10)
 
@@ -371,9 +344,32 @@ class DeviceDetailPanel(QWidget):
         button_layout.addWidget(self.reset_btn)
 
         button_layout.addStretch()
-
         content_layout.addLayout(button_layout)
-        content_layout.addStretch()
+
+        # ---- Log group (at bottom, fills remaining space) ----
+        log_group = QGroupBox("测试日志")
+        log_group.setStyleSheet(GROUPBOX_STYLE)
+        log_layout = QVBoxLayout()
+        log_layout.setContentsMargins(8, 16, 8, 8)
+
+        self.log_text = QTextEdit()
+        self.log_text.setReadOnly(True)
+        self.log_text.setFont(QFont("Consolas", 10))
+        self.log_text.setMinimumHeight(120)
+        self.log_text.setStyleSheet("""
+            QTextEdit {
+                background-color: #1e1e1e;
+                color: #d4d4d4;
+                border: 1px solid #333;
+                border-radius: 4px;
+                padding: 8px;
+                selection-background-color: #264f78;
+            }
+        """)
+        log_layout.addWidget(self.log_text)
+
+        log_group.setLayout(log_layout)
+        content_layout.addWidget(log_group, 1)
 
         content_widget.setLayout(content_layout)
         scroll.setWidget(content_widget)
@@ -405,7 +401,7 @@ class DeviceDetailPanel(QWidget):
 
     def update_firmware_status(self, name: str, size_mb: float):
         self.firmware_status_label.setText(f"固件: {name} ({size_mb:.2f} MB)")
-        self.firmware_status_label.setStyleSheet("color: #4caf50; font-weight: bold;")
+        self.firmware_status_label.setStyleSheet("font-family: 'Microsoft YaHei'; font-size: 13px; color: #4caf50; font-weight: bold;")
 
     def update_ota_progress(self, progress: int, sent_mb: float, total_mb: float):
         if not self.progress_bar.isVisible():
@@ -424,16 +420,16 @@ class DeviceDetailPanel(QWidget):
     def update_auto_test_status(self, status: str):
         if status == "passed":
             self.auto_test_status.setText("✓ 通过")
-            self.auto_test_status.setStyleSheet("color: #4caf50; font-weight: bold;")
+            self.auto_test_status.setStyleSheet("font-family: 'Microsoft YaHei'; font-size: 13px; color: #4caf50; font-weight: bold;")
         elif status == "failed":
             self.auto_test_status.setText("✗ 失败")
-            self.auto_test_status.setStyleSheet("color: #f44336; font-weight: bold;")
+            self.auto_test_status.setStyleSheet("font-family: 'Microsoft YaHei'; font-size: 13px; color: #f44336; font-weight: bold;")
         elif status == "testing":
             self.auto_test_status.setText("⟳ 测试中")
-            self.auto_test_status.setStyleSheet("color: #ff9800; font-weight: bold;")
+            self.auto_test_status.setStyleSheet("font-family: 'Microsoft YaHei'; font-size: 13px; color: #ff9800; font-weight: bold;")
         else:
             self.auto_test_status.setText("")
-            self.auto_test_status.setStyleSheet("")
+            self.auto_test_status.setStyleSheet("font-family: 'Microsoft YaHei'; font-size: 13px;")
 
     def set_testing(self, is_testing: bool):
         self.auto_test_btn.setEnabled(not is_testing)
@@ -451,7 +447,7 @@ class DeviceDetailPanel(QWidget):
         for widget in self.test_widgets.values():
             widget.update_result("not_tested")
         self.auto_test_status.setText("")
-        self.auto_test_status.setStyleSheet("")
+        self.auto_test_status.setStyleSheet("font-family: 'Microsoft YaHei'; font-size: 13px;")
         self.clear_log()
         self.hide_progress_bar()
 
