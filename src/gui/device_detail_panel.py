@@ -1,28 +1,21 @@
 from PyQt5.QtWidgets import (QWidget, QVBoxLayout, QHBoxLayout, QLabel,
-                             QPushButton, QTextEdit, QGroupBox, QScrollArea,
+                             QPushButton, QTextEdit, QScrollArea,
                              QProgressBar, QFrame)
 from PyQt5.QtCore import Qt, pyqtSignal
 from PyQt5.QtGui import QFont
 
 
-GROUPBOX_STYLE = """
-    QGroupBox {
-        border: 1px solid #dcdcdc;
-        border-radius: 6px;
-        margin-top: 12px;
-        padding: 10px 8px 8px 8px;
-        background-color: #fafafa;
-    }
-    QGroupBox::title {
-        subcontrol-origin: margin;
-        subcontrol-position: top left;
-        padding: 2px 10px;
-        color: #333;
-        font-family: 'Microsoft YaHei';
-        font-size: 10pt;
-        font-weight: bold;
-    }
-"""
+SECTION_TITLE_STYLE = (
+    "font-family: 'Microsoft YaHei'; font-size: 13px; font-weight: bold; "
+    "color: #333; padding: 2px 0px;"
+)
+
+SECTION_FRAME_STYLE = (
+    "QFrame#sectionFrame { "
+    "  border: 1px solid #dcdcdc; border-radius: 6px; "
+    "  background-color: #fafafa; "
+    "}"
+)
 
 
 class TestItemWidget(QWidget):
@@ -99,6 +92,19 @@ class TestItemWidget(QWidget):
         self.test_btn.setEnabled(enabled)
 
 
+def _create_section_title(text: str) -> QLabel:
+    label = QLabel(text)
+    label.setStyleSheet(SECTION_TITLE_STYLE)
+    return label
+
+
+def _create_section_frame() -> QFrame:
+    frame = QFrame()
+    frame.setObjectName("sectionFrame")
+    frame.setStyleSheet(SECTION_FRAME_STYLE)
+    return frame
+
+
 class DeviceDetailPanel(QWidget):
 
     test_clicked = pyqtSignal(str, str)       # test_name, device_sn
@@ -143,12 +149,13 @@ class DeviceDetailPanel(QWidget):
         )
         content_layout.addWidget(self.device_info_label)
 
-        # ---- Test items group ----
-        test_group = QGroupBox("检测项目")
-        test_group.setStyleSheet(GROUPBOX_STYLE)
+        # ---- 检测项目 ----
+        content_layout.addWidget(_create_section_title("检测项目"))
+
+        test_frame = _create_section_frame()
         test_layout = QHBoxLayout()
         test_layout.setSpacing(8)
-        test_layout.setContentsMargins(8, 16, 8, 8)
+        test_layout.setContentsMargins(8, 8, 8, 8)
 
         # Auto-test button (vertical: button + status)
         auto_test_container = QVBoxLayout()
@@ -206,17 +213,18 @@ class DeviceDetailPanel(QWidget):
             self.test_widgets[test_name] = widget
 
         test_layout.addStretch()
-        test_group.setLayout(test_layout)
-        content_layout.addWidget(test_group)
+        test_frame.setLayout(test_layout)
+        content_layout.addWidget(test_frame)
 
-        # ---- OTA group ----
-        ota_group = QGroupBox("固件升级")
-        ota_group.setStyleSheet(GROUPBOX_STYLE)
+        # ---- 固件升级 ----
+        content_layout.addWidget(_create_section_title("固件升级"))
+
+        ota_frame = _create_section_frame()
         ota_layout = QVBoxLayout()
-        ota_layout.setContentsMargins(8, 16, 8, 8)
+        ota_layout.setContentsMargins(8, 8, 8, 8)
         ota_layout.setSpacing(8)
 
-        # Buttons row: [上传固件] [固件状态] [OTA升级] [OTA状态]
+        # Buttons row
         ota_btn_row = QHBoxLayout()
         ota_btn_row.setSpacing(10)
 
@@ -298,10 +306,10 @@ class DeviceDetailPanel(QWidget):
         self.progress_bar.setVisible(False)
         ota_layout.addWidget(self.progress_bar)
 
-        ota_group.setLayout(ota_layout)
-        content_layout.addWidget(ota_group)
+        ota_frame.setLayout(ota_layout)
+        content_layout.addWidget(ota_frame)
 
-        # ---- Control buttons (above log so always visible) ----
+        # ---- Control buttons ----
         button_layout = QHBoxLayout()
         button_layout.setSpacing(10)
 
@@ -346,11 +354,12 @@ class DeviceDetailPanel(QWidget):
         button_layout.addStretch()
         content_layout.addLayout(button_layout)
 
-        # ---- Log group (at bottom, fills remaining space) ----
-        log_group = QGroupBox("测试日志")
-        log_group.setStyleSheet(GROUPBOX_STYLE)
+        # ---- 测试日志 ----
+        content_layout.addWidget(_create_section_title("测试日志"))
+
+        log_frame = _create_section_frame()
         log_layout = QVBoxLayout()
-        log_layout.setContentsMargins(8, 16, 8, 8)
+        log_layout.setContentsMargins(8, 8, 8, 8)
 
         self.log_text = QTextEdit()
         self.log_text.setReadOnly(True)
@@ -368,8 +377,8 @@ class DeviceDetailPanel(QWidget):
         """)
         log_layout.addWidget(self.log_text)
 
-        log_group.setLayout(log_layout)
-        content_layout.addWidget(log_group, 1)
+        log_frame.setLayout(log_layout)
+        content_layout.addWidget(log_frame, 1)
 
         content_widget.setLayout(content_layout)
         scroll.setWidget(content_widget)
