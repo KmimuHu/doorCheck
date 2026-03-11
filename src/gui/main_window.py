@@ -110,6 +110,25 @@ class OTAThread(QThread):
             self.finished_signal.emit(False)
 
 
+class SingleTestThread(QThread):
+    progress_signal = pyqtSignal(str)
+    finished_signal = pyqtSignal(bool)
+
+    def __init__(self, test_engine, test_func):
+        super().__init__()
+        self.test_engine = test_engine
+        self.test_func = test_func
+
+    def run(self):
+        self.test_engine.set_progress_callback(lambda msg: self.progress_signal.emit(msg))
+        try:
+            result = self.test_func()
+            self.finished_signal.emit(result)
+        except Exception as e:
+            self.progress_signal.emit(f"❌ 测试异常: {str(e)}")
+            self.finished_signal.emit(False)
+
+
 class MainWindow(QMainWindow):
     device_found_signal = pyqtSignal(object)
     device_removed_signal = pyqtSignal(str)
@@ -351,7 +370,6 @@ class MainWindow(QMainWindow):
                 return
 
             test_engine = TestEngine(mqtt_client, self.config)
-            test_engine.set_progress_callback(lambda msg: self.device_detail_panel.append_log(msg))
 
             QMessageBox.information(
                 self,
@@ -364,21 +382,26 @@ class MainWindow(QMainWindow):
                 '请点击确定开始测试'
             )
 
-            success = test_engine.test_remote_pairing()
-
-            if success:
-                self.device_detail_panel.append_log("✅ 遥控器配对成功")
-                self.device_detail_panel.update_test_result("remote_pairing", "passed")
-                QMessageBox.information(self, '成功', '遥控器配对成功')
-            else:
-                self.device_detail_panel.append_log("❌ 遥控器配对失败")
-                self.device_detail_panel.update_test_result("remote_pairing", "failed")
-                QMessageBox.critical(self, '错误', '遥控器配对失败')
+            thread = SingleTestThread(test_engine, lambda: test_engine.test_remote_pairing())
+            thread.progress_signal.connect(self.device_detail_panel.append_log)
+            thread.finished_signal.connect(lambda success: self._on_remote_pairing_finished(success))
+            thread.start()
+            self._single_test_thread = thread
 
         except Exception as e:
             self.device_detail_panel.append_log(f"❌ 遥控器配对失败: {str(e)}")
             self.device_detail_panel.update_test_result("remote_pairing", "failed")
             QMessageBox.critical(self, '错误', f'遥控器配对失败: {str(e)}')
+
+    def _on_remote_pairing_finished(self, success: bool):
+        if success:
+            self.device_detail_panel.append_log("✅ 遥控器配对成功")
+            self.device_detail_panel.update_test_result("remote_pairing", "passed")
+            QMessageBox.information(self, '成功', '遥控器配对成功')
+        else:
+            self.device_detail_panel.append_log("❌ 遥控器配对失败")
+            self.device_detail_panel.update_test_result("remote_pairing", "failed")
+            QMessageBox.critical(self, '错误', '遥控器配对失败')
 
     def start_emergency_switch_test(self, device):
         self.device_detail_panel.update_test_result("emergency_switch", "testing")
@@ -390,7 +413,6 @@ class MainWindow(QMainWindow):
                 return
 
             test_engine = TestEngine(mqtt_client, self.config)
-            test_engine.set_progress_callback(lambda msg: self.device_detail_panel.append_log(msg))
 
             QMessageBox.information(
                 self,
@@ -402,21 +424,26 @@ class MainWindow(QMainWindow):
                 '请点击确定开始测试'
             )
 
-            success = test_engine.test_emergency_switch(timeout=10)
-
-            if success:
-                self.device_detail_panel.append_log("✅ 应急开关测试成功")
-                self.device_detail_panel.update_test_result("emergency_switch", "passed")
-                QMessageBox.information(self, '成功', '应急开关测试成功')
-            else:
-                self.device_detail_panel.append_log("❌ 应急开关测试失败")
-                self.device_detail_panel.update_test_result("emergency_switch", "failed")
-                QMessageBox.critical(self, '错误', '应急开关测试失败')
+            thread = SingleTestThread(test_engine, lambda: test_engine.test_emergency_switch(timeout=10))
+            thread.progress_signal.connect(self.device_detail_panel.append_log)
+            thread.finished_signal.connect(lambda success: self._on_emergency_switch_finished(success))
+            thread.start()
+            self._single_test_thread = thread
 
         except Exception as e:
             self.device_detail_panel.append_log(f"❌ 应急开关测试失败: {str(e)}")
             self.device_detail_panel.update_test_result("emergency_switch", "failed")
             QMessageBox.critical(self, '错误', f'应急开关测试失败: {str(e)}')
+
+    def _on_emergency_switch_finished(self, success: bool):
+        if success:
+            self.device_detail_panel.append_log("✅ 应急开关测试成功")
+            self.device_detail_panel.update_test_result("emergency_switch", "passed")
+            QMessageBox.information(self, '成功', '应急开关测试成功')
+        else:
+            self.device_detail_panel.append_log("❌ 应急开关测试失败")
+            self.device_detail_panel.update_test_result("emergency_switch", "failed")
+            QMessageBox.critical(self, '错误', '应急开关测试失败')
 
     # ---------------------------------------------------------------
     # Firmware & OTA
