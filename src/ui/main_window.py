@@ -425,9 +425,10 @@ class MainWindow(QMainWindow):
                 '请点击确定开始测试'
             )
 
+            start_time = time.time()
             thread = SingleTestThread(test_engine, lambda: test_engine.test_remote_pairing())
             thread.progress_signal.connect(self.device_detail_panel.append_log)
-            thread.finished_signal.connect(lambda success: self._on_remote_pairing_finished(success))
+            thread.finished_signal.connect(lambda success, st=start_time, te=test_engine: self._on_remote_pairing_finished(success, time.time() - st, te))
             thread.start()
             self._single_test_thread = thread
 
@@ -436,11 +437,12 @@ class MainWindow(QMainWindow):
             self.device_detail_panel.update_test_result("remote_pairing", "failed")
             QMessageBox.critical(self, '错误', f'遥控器配对失败: {str(e)}')
 
-    def _on_remote_pairing_finished(self, success: bool):
+    def _on_remote_pairing_finished(self, success: bool, duration: float, test_engine):
         import uuid
         from datetime import datetime
 
         # 保存测试记录
+        steps = [{'name': s['name'], 'success': s['success'], 'message': s['message']} for s in test_engine.result.steps]
         record = {
             'id': str(uuid.uuid4()),
             'device_sn': self.selected_device_sn,
@@ -448,8 +450,8 @@ class MainWindow(QMainWindow):
             'test_time': datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
             'test_type': '遥控器配对测试',
             'status': 'passed' if success else 'failed',
-            'duration': 0,
-            'steps': [{'name': '遥控器配对', 'success': success, 'message': ''}]
+            'duration': round(duration, 2),
+            'steps': steps
         }
         self.test_record_storage.save_record(record)
 
@@ -483,9 +485,10 @@ class MainWindow(QMainWindow):
                 '请点击确定开始测试'
             )
 
+            start_time = time.time()
             thread = SingleTestThread(test_engine, lambda: test_engine.test_emergency_switch(timeout=10))
             thread.progress_signal.connect(self.device_detail_panel.append_log)
-            thread.finished_signal.connect(lambda success: self._on_emergency_switch_finished(success))
+            thread.finished_signal.connect(lambda success, st=start_time, te=test_engine: self._on_emergency_switch_finished(success, time.time() - st, te))
             thread.start()
             self._single_test_thread = thread
 
@@ -494,11 +497,12 @@ class MainWindow(QMainWindow):
             self.device_detail_panel.update_test_result("emergency_switch", "failed")
             QMessageBox.critical(self, '错误', f'应急开关测试失败: {str(e)}')
 
-    def _on_emergency_switch_finished(self, success: bool):
+    def _on_emergency_switch_finished(self, success: bool, duration: float, test_engine):
         import uuid
         from datetime import datetime
 
         # 保存测试记录
+        steps = [{'name': s['name'], 'success': s['success'], 'message': s['message']} for s in test_engine.result.steps]
         record = {
             'id': str(uuid.uuid4()),
             'device_sn': self.selected_device_sn,
@@ -506,8 +510,8 @@ class MainWindow(QMainWindow):
             'test_time': datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
             'test_type': '应急开关测试',
             'status': 'passed' if success else 'failed',
-            'duration': 0,
-            'steps': [{'name': '应急开关', 'success': success, 'message': ''}]
+            'duration': round(duration, 2),
+            'steps': steps
         }
         self.test_record_storage.save_record(record)
 
