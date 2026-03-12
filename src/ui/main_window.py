@@ -617,12 +617,68 @@ class MainWindow(QMainWindow):
     # ---------------------------------------------------------------
     # Print & Reset
     # ---------------------------------------------------------------
+    def _upload_test_data(self, sn: str) -> bool:
+        """上传设备测试数据到服务器"""
+        try:
+            from datetime import datetime
+            import requests
+
+            records = self.test_record_storage.get_records_by_sn(sn)
+            if not records:
+                logger.warning(f"设备 {sn} 没有测试记录")
+                return True
+
+            upload_data = []
+            for record in records:
+                create_time = datetime.strptime(record['create_time'], '%Y-%m-%d %H:%M:%S')
+                update_time = datetime.strptime(record['test_time'], '%Y-%m-%d %H:%M:%S')
+
+                upload_data.append({
+                    'cur_createTime': int(create_time.timestamp() * 1000),
+                    'cur_updateTime': int(update_time.timestamp() * 1000),
+                    'deviceName': record['test_type'],
+                    'result': 'true' if record['status'] == 'passed' else 'false',
+                    'sn': sn
+                })
+
+            self.device_detail_panel.append_log(f"正在上传测试数据，共 {len(upload_data)} 条...")
+
+            response = requests.post(
+                'http://ishop-oqa.weidian.com/checkData/addBatch',
+                json=upload_data,
+                timeout=10
+            )
+
+            if response.status_code == 200:
+                self.device_detail_panel.append_log("✅ 测试数据上传成功")
+                logger.info(f"设备 {sn} 测试数据上传成功")
+                return True
+            else:
+                self.device_detail_panel.append_log(f"❌ 测试数据上传失败: HTTP {response.status_code}")
+                logger.error(f"上传失败: HTTP {response.status_code}")
+                return False
+
+        except Exception as e:
+            self.device_detail_panel.append_log(f"❌ 测试数据上传异常: {str(e)}")
+            logger.error(f"上传测试数据异常: {e}")
+            return False
+
     def print_label(self, sn: str):
         device = self.devices.get(sn)
         if not device:
             return
 
         self.device_detail_panel.append_log(f"打印标签: {sn}")
+
+        upload_success = self._upload_test_data(sn)
+        if not upload_success:
+            reply = QMessageBox.question(
+                self, '上传失败',
+                '测试数据上传失败，是否继续打印标签？',
+                QMessageBox.Yes | QMessageBox.No
+            )
+            if reply == QMessageBox.No:
+                return
 
         try:
             success = self.label_printer.print_label(sn, "PASSED")

@@ -90,6 +90,33 @@ class TestRecordStorage:
             logger.error(f"加载测试记录失败: {e}")
             return []
 
+    def get_records_by_sn(self, sn: str) -> List[Dict]:
+        """获取指定设备的所有测试记录"""
+        try:
+            import json
+            conn = sqlite3.connect(self.db_file)
+            cursor = conn.cursor()
+            cursor.execute('SELECT * FROM test_records WHERE sn = ? ORDER BY update_time DESC', (sn,))
+            rows = cursor.fetchall()
+            conn.close()
+
+            records = []
+            for row in rows:
+                records.append({
+                    'id': row[0],
+                    'device_sn': row[1],
+                    'create_time': row[2],
+                    'test_time': row[3],
+                    'test_type': row[4],
+                    'status': row[5],
+                    'duration': row[6],
+                    'steps': json.loads(row[7]) if row[7] else []
+                })
+            return records
+        except Exception as e:
+            logger.error(f"获取设备测试记录失败: {e}")
+            return []
+
     def search_records(self, sn_keyword: str = '', status_filter: str = 'all') -> List[Dict]:
         """搜索测试记录"""
         try:
