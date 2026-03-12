@@ -3,13 +3,15 @@ import time
 
 from PyQt5.QtWidgets import (QMainWindow, QWidget, QHBoxLayout, QVBoxLayout,
                              QMessageBox, QFileDialog, QSplitter, QDialog,
-                             QLabel)
+                             QLabel, QAction)
 from PyQt5.QtCore import Qt, pyqtSignal, QThread, QTimer
 from PyQt5.QtGui import QFont
 from zeroconf import Zeroconf, ServiceBrowser
+import uuid
 
 from .device_list_panel import DeviceListPanel
 from .device_detail_panel import DeviceDetailPanel
+from .test_record_panel import TestRecordPanel
 from ..discovery.mdns_discovery import DeviceInfo, DeviceDiscoveryListener, MasterMdnsService
 from ..communication.mqtt_client import MQTTClient
 from ..testing.test_engine import TestEngine
@@ -19,6 +21,7 @@ from ..http_server.config_server import ConfigServer
 from ..mqtt_broker.broker_manager import MQTTBrokerManager
 from ..protocol.message import DiscoverMessage
 from ..tftp_server.tftp_server import TFTPServer
+from ..storage.test_record_storage import TestRecordStorage
 from ..utils.config import Config
 from ..utils.logger import logger
 
@@ -143,6 +146,7 @@ class MainWindow(QMainWindow):
         self.mqtt_client = None
         self.test_engine = None
         self.label_printer = LabelPrinter(self.config)
+        self.test_record_storage = TestRecordStorage()
         self.zeroconf = None
         self.browser = None
         self.master_mdns = None
@@ -171,6 +175,7 @@ class MainWindow(QMainWindow):
         self.ota_log_signal.connect(self._emit_ota_log)
 
         self.init_ui()
+        self.init_menu()
         self.connect_signals()
         self.start_mqtt_broker()
         self.start_http_server()
@@ -205,6 +210,29 @@ class MainWindow(QMainWindow):
         central_widget.setLayout(main_layout)
 
         self.statusBar().showMessage("就绪")
+
+    def init_menu(self):
+        menubar = self.menuBar()
+        menubar.setNativeMenuBar(False)  # 在窗口内显示菜单栏
+
+        tools_menu = menubar.addMenu('工具')
+
+        view_records_action = QAction('查看测试记录', self)
+        view_records_action.triggered.connect(self.open_test_records)
+        tools_menu.addAction(view_records_action)
+
+    def open_test_records(self):
+        """打开测试记录窗口"""
+        dialog = QDialog(self)
+        dialog.setWindowTitle('测试记录')
+        dialog.setMinimumSize(1200, 700)
+
+        layout = QVBoxLayout()
+        record_panel = TestRecordPanel()
+        layout.addWidget(record_panel)
+        dialog.setLayout(layout)
+
+        dialog.exec_()
 
     def connect_signals(self):
         # Device list signals
@@ -302,6 +330,21 @@ class MainWindow(QMainWindow):
 
         self.device_detail_panel.set_testing(False)
 
+        # 保存测试记录
+        import uuid
+        from datetime import datetime
+        record = {
+            'id': str(uuid.uuid4()),
+            'device_sn': device.sn,
+            'create_time': datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
+            'test_time': datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
+            'test_type': '一键测试',
+            'status': 'passed' if result.status == TestStatus.PASSED else 'failed',
+            'duration': result.duration,
+            'steps': [{'name': s.name, 'success': s.success, 'message': s.message} for s in result.steps]
+        }
+        self.test_record_storage.save_record(record)
+
         if result.status == TestStatus.PASSED:
             self.device_detail_panel.append_log("✅ 测试通过！")
             self.device_detail_panel.update_auto_test_status("passed")
@@ -394,6 +437,22 @@ class MainWindow(QMainWindow):
             QMessageBox.critical(self, '错误', f'遥控器配对失败: {str(e)}')
 
     def _on_remote_pairing_finished(self, success: bool):
+        import uuid
+        from datetime import datetime
+
+        # 保存测试记录
+        record = {
+            'id': str(uuid.uuid4()),
+            'device_sn': self.selected_device_sn,
+            'create_time': datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
+            'test_time': datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
+            'test_type': '遥控器配对测试',
+            'status': 'passed' if success else 'failed',
+            'duration': 0,
+            'steps': [{'name': '遥控器配对', 'success': success, 'message': ''}]
+        }
+        self.test_record_storage.save_record(record)
+
         if success:
             self.device_detail_panel.append_log("✅ 遥控器配对成功")
             self.device_detail_panel.update_test_result("remote_pairing", "passed")
@@ -436,6 +495,22 @@ class MainWindow(QMainWindow):
             QMessageBox.critical(self, '错误', f'应急开关测试失败: {str(e)}')
 
     def _on_emergency_switch_finished(self, success: bool):
+        import uuid
+        from datetime import datetime
+
+        # 保存测试记录
+        record = {
+            'id': str(uuid.uuid4()),
+            'device_sn': self.selected_device_sn,
+            'create_time': datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
+            'test_time': datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
+            'test_type': '应急开关测试',
+            'status': 'passed' if success else 'failed',
+            'duration': 0,
+            'steps': [{'name': '应急开关', 'success': success, 'message': ''}]
+        }
+        self.test_record_storage.save_record(record)
+
         if success:
             self.device_detail_panel.append_log("✅ 应急开关测试成功")
             self.device_detail_panel.update_test_result("emergency_switch", "passed")
