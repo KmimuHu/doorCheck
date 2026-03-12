@@ -607,7 +607,7 @@ class MainWindow(QMainWindow):
             ota_thread.finished_signal.connect(lambda success: self._on_ota_finished(device.sn, success))
             ota_thread.start()
 
-            QMessageBox.information(self, '提示', 'OTA升级已启动\n设备正在下载固件，请等待设备重启')
+            QMessageBox.information(self, '提示', 'OTA升级已启动\n设备正在下载固件')
 
         except Exception as e:
             self.device_detail_panel.append_log(f"❌ OTA升级异常: {str(e)}")
