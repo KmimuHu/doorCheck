@@ -330,20 +330,21 @@ class MainWindow(QMainWindow):
 
         self.device_detail_panel.set_testing(False)
 
-        # 保存测试记录
+        # 保存测试记录：拆分为各子测试类型分别保存
         import uuid
         from datetime import datetime
-        record = {
-            'id': str(uuid.uuid4()),
-            'device_sn': device.sn,
-            'create_time': datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
-            'test_time': datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
-            'test_type': '一键测试',
-            'status': 'passed' if result.status == TestStatus.PASSED else 'failed',
-            'duration': result.duration,
-            'steps': [{'name': s['name'], 'success': s['success'], 'message': s['message']} for s in result.steps]
-        }
-        self.test_record_storage.save_record(record)
+        for sub in result.sub_results:
+            record = {
+                'id': str(uuid.uuid4()),
+                'device_sn': device.sn,
+                'create_time': datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
+                'test_time': datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
+                'test_type': sub['test_type'],
+                'status': sub['status'],
+                'duration': sub['duration'],
+                'steps': [{'name': s['name'], 'success': s['success'], 'message': s['message']} for s in sub['steps']]
+            }
+            self.test_record_storage.save_record(record)
 
         if result.status == TestStatus.PASSED:
             self.device_detail_panel.append_log("✅ 测试通过！")

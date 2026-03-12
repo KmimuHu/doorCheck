@@ -22,6 +22,7 @@ class TestResult:
         self.error_message = ""
         self.start_time = None
         self.end_time = None
+        self.sub_results = []
 
     def add_step(self, step_name: str, success: bool, message: str = ""):
         self.steps.append({

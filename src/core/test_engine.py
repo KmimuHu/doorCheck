@@ -187,9 +187,14 @@ class TestEngine:
                     self._report_progress("⚠️ 开锁测试失败，继续后续测试")
             
             time.sleep(1)
-            
+
             self._report_progress("【步骤3】测试应急开关")
-            if not self.test_emergency_switch(timeout=10, report_callback=report_callback):
+            emergency_start_time = time.time()
+            emergency_step_start = len(self.result.steps)
+            emergency_success = self.test_emergency_switch(timeout=10, report_callback=report_callback)
+            emergency_end_time = time.time()
+            emergency_steps = list(self.result.steps[emergency_step_start:])
+            if not emergency_success:
                 failed_tests.append("应急开关测试")
                 self._report_progress("⚠️ 应急开关测试失败，继续后续测试")
             else:
@@ -201,13 +206,32 @@ class TestEngine:
                 if report_callback:
                     report_callback("hide_dialog", 0)
 
+            self.result.sub_results.append({
+                'test_type': '应急开关测试',
+                'status': 'passed' if emergency_success else 'failed',
+                'duration': round(emergency_end_time - emergency_start_time, 2),
+                'steps': emergency_steps,
+            })
+
             self._report_progress("【步骤4】测试遥控器配对")
-            if not self.test_remote_pairing(pairing_duration=3000, open_timeout=8, report_callback=report_callback):
+            remote_start_time = time.time()
+            remote_step_start = len(self.result.steps)
+            remote_success = self.test_remote_pairing(pairing_duration=3000, open_timeout=8, report_callback=report_callback)
+            remote_end_time = time.time()
+            remote_steps = list(self.result.steps[remote_step_start:])
+            if not remote_success:
                 failed_tests.append("遥控器配对测试")
                 self._report_progress("⚠️ 遥控器配对测试失败")
             else:
                 if report_callback:
                     report_callback("hide_dialog", 0)
+
+            self.result.sub_results.append({
+                'test_type': '遥控器配对测试',
+                'status': 'passed' if remote_success else 'failed',
+                'duration': round(remote_end_time - remote_start_time, 2),
+                'steps': remote_steps,
+            })
             
             if failed_tests:
                 fail_message = "以下测试项未通过: " + ", ".join(failed_tests)
