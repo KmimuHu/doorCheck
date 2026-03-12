@@ -36,19 +36,30 @@ python main.py
 ```
 doorCheck/
 ├── src/
-│   ├── gui/               # GUI界面
+│   ├── core/              # 核心业务逻辑层
+│   │   ├── test_engine.py          # 测试引擎
+│   │   ├── test_result.py          # 测试结果
+│   │   ├── protocol_message.py     # 协议消息
+│   │   └── crypto.py               # 加密工具
+│   ├── network/           # 网络通信层
+│   │   ├── mqtt_client.py          # MQTT客户端
+│   │   ├── mqtt_broker.py          # MQTT代理服务器
+│   │   ├── http_server.py          # HTTP配置服务器
+│   │   ├── tftp_server.py          # TFTP固件服务器
+│   │   └── mdns_discovery.py       # mDNS设备发现
+│   ├── ui/                # 用户界面层
 │   │   ├── main_window.py          # 主窗口与业务逻辑
 │   │   ├── device_list_panel.py    # 左侧设备列表面板
-│   │   └── device_detail_panel.py  # 右侧设备详情面板
-│   ├── discovery/         # mDNS设备发现
-│   ├── communication/     # MQTT通信
-│   ├── protocol/          # 协议层（加密/消息）
-│   ├── testing/           # 测试引擎
-│   ├── printing/          # 标签打印
-│   ├── http_server/       # HTTP配置服务
-│   ├── mqtt_broker/       # 内嵌MQTT代理
-│   ├── tftp_server/       # TFTP固件传输服务
-│   └── utils/             # 工具类（配置、日志、路径）
+│   │   ├── device_detail_panel.py  # 右侧设备详情面板
+│   │   └── test_record_panel.py    # 测试记录面板
+│   ├── data/              # 数据持久化层
+│   │   └── test_record_storage.py  # 测试记录存储（SQLite）
+│   ├── hardware/          # 硬件接口层
+│   │   └── label_printer.py        # 标签打印机
+│   └── utils/             # 工具类
+│       ├── config.py               # 配置管理
+│       ├── logger.py               # 日志工具
+│       └── paths.py                # 路径工具
 ├── config/                # 配置文件
 ├── certs/                 # SSL证书
 ├── tools/                 # 辅助工具（门锁模拟器、压测脚本）
