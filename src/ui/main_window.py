@@ -929,17 +929,17 @@ class MainWindow(QMainWindow):
 
             logger.info(f"设备 {device_sn} OTA进度: {progress}%")
 
-        if progress >= 100:
+        if progress >= 100 and device_sn in self.device_ota_in_progress:
             self.device_ota_in_progress.discard(device_sn)
             self.device_ota_progress.pop(device_sn, None)
             size_mb = total_bytes / (1024 * 1024)
             logger.info(f"设备 {device_sn} 固件传输完成，共 {size_mb:.2f} MB")
 
             if device_sn == self.selected_device_sn:
-                self.device_detail_panel.append_log(f"✅ 固件传输完成，共 {size_mb:.2f} MB，请重启设备")
+                self.device_detail_panel.append_log(f"✅ 固件传输完成，共 {size_mb:.2f} MB，请等待设备重启")
                 self.device_detail_panel.hide_progress_bar()
 
-            QMessageBox.information(self, 'OTA升级', f'固件传输完成\n\n设备: {device_sn}\n大小: {size_mb:.2f} MB\n\n请重启设备')
+            QMessageBox.information(self, 'OTA升级', f'固件传输完成\n\n设备: {device_sn}\n大小: {size_mb:.2f} MB\n\n请等待设备重启')
 
     def _emit_ota_log(self, device_sn: str, message: str):
         if device_sn == self.selected_device_sn:
