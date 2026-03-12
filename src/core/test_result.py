@@ -35,6 +35,12 @@ class TestResult:
         self.status = TestStatus.PASSED
         self.end_time = time.time()
 
+    @property
+    def duration(self):
+        if self.start_time and self.end_time:
+            return round(self.end_time - self.start_time, 2)
+        return 0
+
     def set_failed(self, error: str):
         self.status = TestStatus.FAILED
         self.error_message = error

@@ -341,7 +341,7 @@ class MainWindow(QMainWindow):
             'test_type': '一键测试',
             'status': 'passed' if result.status == TestStatus.PASSED else 'failed',
             'duration': result.duration,
-            'steps': [{'name': s.name, 'success': s.success, 'message': s.message} for s in result.steps]
+            'steps': [{'name': s['name'], 'success': s['success'], 'message': s['message']} for s in result.steps]
         }
         self.test_record_storage.save_record(record)
 
