@@ -1030,17 +1030,22 @@ class MainWindow(QMainWindow):
 
         self._check_offline_devices()
 
-        if self.broadcast_mqtt_client and self.broadcast_mqtt_client.connected:
+        # 重启ServiceBrowser以触发完整的网络扫描
+        try:
+            if self.browser:
+                self.browser.cancel()
+                logger.info("已停止旧的ServiceBrowser")
+
+            self.browser = ServiceBrowser(self.zeroconf, self.config.mdns_service_type, self.listener)
+            logger.info("已启动新的ServiceBrowser，正在扫描网络...")
+        except Exception as e:
+            logger.error(f"重启ServiceBrowser失败: {e}")
+
+        # 如果有已知设备，也通过MQTT发送discover命令
+        if self.broadcast_mqtt_client and self.broadcast_mqtt_client.connected and len(self.devices) > 0:
             try:
                 discover_msg = DiscoverMessage(self.config.device_psk)
                 payload = discover_msg.to_json()
-
-                if len(self.devices) == 0:
-                    logger.info("当前没有已发现的设备，使用mDNS刷新")
-                    if self.listener and self.zeroconf:
-                        self.listener.refresh_all_devices(self.zeroconf, self.config.mdns_service_type)
-                        logger.info("已触发mDNS设备刷新")
-                    return
 
                 for sn, device in self.devices.items():
                     try:
@@ -1054,14 +1059,6 @@ class MainWindow(QMainWindow):
 
             except Exception as e:
                 logger.error(f"广播discover命令失败: {e}")
-        else:
-            logger.warning("广播MQTT客户端未连接，使用mDNS刷新")
-            if self.listener and self.zeroconf:
-                try:
-                    self.listener.refresh_all_devices(self.zeroconf, self.config.mdns_service_type)
-                    logger.info("已触发mDNS设备刷新")
-                except Exception as e:
-                    logger.error(f"刷新设备失败: {e}")
 
     # ---------------------------------------------------------------
     # Close

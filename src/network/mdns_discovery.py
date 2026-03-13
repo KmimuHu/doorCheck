@@ -70,8 +70,8 @@ class DeviceDiscoveryListener(ServiceListener):
     def refresh_all_devices(self, zc: Zeroconf, service_type: str) -> None:
         with self._lock:
             device_names = list(self.discovered_devices.keys())
-        
-        logger.info(f"刷新 {len(device_names)} 个设备...")
+
+        logger.info(f"刷新 {len(device_names)} 个已知设备...")
         for name in device_names:
             info = zc.get_service_info(service_type, name)
             if info:
