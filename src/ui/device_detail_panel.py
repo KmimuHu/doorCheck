@@ -71,10 +71,10 @@ class TestItemWidget(QWidget):
 
     def update_result(self, status: str, message: str = ""):
         if status == "passed":
-            self.status_label.setText("✓ 通过")
+            self.status_label.setText("✅ 通过")
             self.status_label.setStyleSheet("font-family: 'Microsoft YaHei'; font-size: 13px; color: #4caf50; font-weight: bold;")
         elif status == "failed":
-            self.status_label.setText("✗ 失败")
+            self.status_label.setText("❌ 失败")
             self.status_label.setStyleSheet("font-family: 'Microsoft YaHei'; font-size: 13px; color: #f44336; font-weight: bold;")
         elif status == "testing":
             self.status_label.setText("⟳ 测试中")
@@ -429,10 +429,10 @@ class DeviceDetailPanel(QWidget):
 
     def update_auto_test_status(self, status: str):
         if status == "passed":
-            self.auto_test_status.setText("✓ 通过")
+            self.auto_test_status.setText("✅ 通过")
             self.auto_test_status.setStyleSheet("font-family: 'Microsoft YaHei'; font-size: 13px; color: #4caf50; font-weight: bold;")
         elif status == "failed":
-            self.auto_test_status.setText("✗ 失败")
+            self.auto_test_status.setText("❌ 失败")
             self.auto_test_status.setStyleSheet("font-family: 'Microsoft YaHei'; font-size: 13px; color: #f44336; font-weight: bold;")
         elif status == "testing":
             self.auto_test_status.setText("⟳ 测试中")

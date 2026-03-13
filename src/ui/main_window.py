@@ -26,6 +26,15 @@ from ..utils.config import Config
 from ..utils.logger import logger
 
 
+def show_message(parent, title, text):
+    """显示无图标的消息框"""
+    msg = QMessageBox(parent)
+    msg.setWindowTitle(title)
+    msg.setText(text)
+    msg.setIcon(QMessageBox.NoIcon)
+    msg.exec_()
+
+
 class CountdownDialog(QDialog):
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -420,7 +429,7 @@ class MainWindow(QMainWindow):
             if success:
                 self.device_detail_panel.append_log(f"✅ {message}")
                 self.device_detail_panel.update_test_result("burn_mac", "passed", message)
-                QMessageBox.information(self, '成功', message)
+                show_message(self, '成功', message)
             else:
                 self.device_detail_panel.append_log(f"❌ {message}")
                 self.device_detail_panel.update_test_result("burn_mac", "failed", message)
@@ -442,7 +451,7 @@ class MainWindow(QMainWindow):
 
             test_engine = TestEngine(mqtt_client, self.config)
 
-            QMessageBox.information(
+            show_message(
                 self,
                 '遥控器配对测试',
                 '即将进行遥控器配对测试\n\n'
@@ -486,7 +495,7 @@ class MainWindow(QMainWindow):
         if success:
             self.device_detail_panel.append_log("✅ 遥控器配对成功")
             self.device_detail_panel.update_test_result("remote_pairing", "passed")
-            QMessageBox.information(self, '成功', '遥控器配对成功')
+            show_message(self, '成功', '遥控器配对成功')
         else:
             self.device_detail_panel.append_log("❌ 遥控器配对失败")
             self.device_detail_panel.update_test_result("remote_pairing", "failed")
@@ -503,7 +512,7 @@ class MainWindow(QMainWindow):
 
             test_engine = TestEngine(mqtt_client, self.config)
 
-            QMessageBox.information(
+            show_message(
                 self,
                 '应急开关测试',
                 '即将进行应急开关测试\n\n'
@@ -546,7 +555,7 @@ class MainWindow(QMainWindow):
         if success:
             self.device_detail_panel.append_log("✅ 应急开关测试成功")
             self.device_detail_panel.update_test_result("emergency_switch", "passed")
-            QMessageBox.information(self, '成功', '应急开关测试成功')
+            show_message(self, '成功', '应急开关测试成功')
         else:
             self.device_detail_panel.append_log("❌ 应急开关测试失败")
             self.device_detail_panel.update_test_result("emergency_switch", "failed")
@@ -582,7 +591,7 @@ class MainWindow(QMainWindow):
             self.device_detail_panel.update_firmware_status(self.current_firmware_name, size_mb)
 
             logger.info(f"固件已上传: {self.current_firmware_name}, 大小: {size_mb:.2f} MB")
-            QMessageBox.information(self, '成功', f'固件已上传成功\n\n文件: {self.current_firmware_name}\n大小: {size_mb:.2f} MB')
+            show_message(self, '成功', f'固件已上传成功\n\n文件: {self.current_firmware_name}\n大小: {size_mb:.2f} MB')
         except Exception as e:
             logger.error(f"上传固件失败: {e}")
             QMessageBox.critical(self, '错误', f'上传固件失败: {str(e)}')
@@ -635,7 +644,7 @@ class MainWindow(QMainWindow):
             ota_thread.finished_signal.connect(lambda success: self._on_ota_finished(device.sn, success))
             ota_thread.start()
 
-            QMessageBox.information(self, '提示', 'OTA升级已启动\n设备正在下载固件')
+            show_message(self, '提示', 'OTA升级已启动\n设备正在下载固件')
 
         except Exception as e:
             self.device_detail_panel.append_log(f"❌ OTA升级异常: {str(e)}")
@@ -753,7 +762,7 @@ class MainWindow(QMainWindow):
 
             if success:
                 self.device_detail_panel.append_log(f"✅ {message}")
-                QMessageBox.information(self, '成功', f'{message}\n\n请重启设备使配置生效。')
+                show_message(self, '成功', f'{message}\n\n请重启设备使配置生效。')
             else:
                 self.device_detail_panel.append_log(f"❌ {message}")
                 QMessageBox.critical(self, '失败', message)
@@ -1037,7 +1046,7 @@ class MainWindow(QMainWindow):
                 self.device_detail_panel.append_log(f"✅ 固件传输完成，共 {size_mb:.2f} MB，请等待设备重启")
                 self.device_detail_panel.hide_progress_bar()
 
-            QMessageBox.information(self, 'OTA升级', f'固件传输完成\n\n设备: {device_sn}\n大小: {size_mb:.2f} MB\n\n请等待设备重启')
+            show_message(self, 'OTA升级', f'固件传输完成\n\n设备: {device_sn}\n大小: {size_mb:.2f} MB\n\n请等待设备重启')
 
     def _emit_ota_log(self, device_sn: str, message: str):
         if device_sn == self.selected_device_sn:
