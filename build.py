@@ -188,12 +188,11 @@ class BuildScript:
         icon_path = self.project_root / "src" / "ui" / "icon" / "vdian.ico"
         if icon_path.exists():
             cmd.extend(["--icon", str(icon_path)])
-            # 将图标文件打包到程序内部
-            icon_dir = self.project_root / "src" / "ui" / "icon"
+            # 将图标文件打包到程序内部根目录
             if self.system == "Windows":
-                cmd.extend(["--add-data", f"{icon_dir};src/ui/icon"])
+                cmd.extend(["--add-data", f"{icon_path};."])
             else:
-                cmd.extend(["--add-data", f"{icon_dir}:src/ui/icon"])
+                cmd.extend(["--add-data", f"{icon_path}:."])
 
         # 不再通过 --add-data 打包 certs/config，改为复制到 dist 目录
 

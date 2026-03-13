@@ -226,11 +226,11 @@ class MainWindow(QMainWindow):
         if getattr(sys, 'frozen', False):
             # 打包后的环境
             base_path = sys._MEIPASS
+            icon_path = os.path.join(base_path, 'vdian.ico')
         else:
             # 开发环境
-            base_path = os.path.dirname(__file__)
+            icon_path = os.path.join(os.path.dirname(__file__), 'icon', 'vdian.ico')
 
-        icon_path = os.path.join(base_path, 'icon', 'vdian.ico')
         if os.path.exists(icon_path):
             self.setWindowIcon(QIcon(icon_path))
 
