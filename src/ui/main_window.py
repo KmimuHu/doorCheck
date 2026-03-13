@@ -5,7 +5,7 @@ from PyQt5.QtWidgets import (QMainWindow, QWidget, QHBoxLayout, QVBoxLayout,
                              QMessageBox, QFileDialog, QSplitter, QDialog,
                              QLabel, QAction)
 from PyQt5.QtCore import Qt, pyqtSignal, QThread, QTimer
-from PyQt5.QtGui import QFont
+from PyQt5.QtGui import QFont, QIcon
 from zeroconf import Zeroconf, ServiceBrowser
 import uuid
 
@@ -189,6 +189,12 @@ class MainWindow(QMainWindow):
     def init_ui(self):
         self.setWindowTitle(f'{self.config.app_name} v{self.config.app_version}')
         self.setGeometry(100, 100, 1400, 800)
+
+        # 设置窗口图标
+        import os
+        icon_path = os.path.join(os.path.dirname(__file__), 'icon', 'vdian.ico')
+        if os.path.exists(icon_path):
+            self.setWindowIcon(QIcon(icon_path))
 
         central_widget = QWidget()
         self.setCentralWidget(central_widget)

@@ -19,7 +19,7 @@ class BuildScript:
         self.project_root = Path(__file__).parent.absolute()
         self.dist_dir = self.project_root / "dist"
         self.build_dir = self.project_root / "build"
-        self.app_name = "DoorTestTool"
+        self.app_name = "门锁产测工具"
 
         # 定义需要检查的依赖
         self.required_modules = [
@@ -183,6 +183,11 @@ class BuildScript:
             "--windowed",
             "--name", self.app_name,
         ]
+
+        # 添加图标
+        icon_path = self.project_root / "src" / "ui" / "icon" / "vdian.ico"
+        if icon_path.exists():
+            cmd.extend(["--icon", str(icon_path)])
 
         # 不再通过 --add-data 打包 certs/config，改为复制到 dist 目录
 
