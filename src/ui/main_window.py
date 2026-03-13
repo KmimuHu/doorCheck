@@ -159,7 +159,9 @@ class MainWindow(QMainWindow):
         self.device_test_threads = {}
         self.broadcast_mqtt_client = None
         self.device_last_heartbeat = {}
-        self.heartbeat_timeout = 90
+        self.device_heartbeat_miss_count = {}
+        self.heartbeat_timeout = 30
+        self.heartbeat_max_miss = 3
         self.tftp_server = None
         self.device_ota_progress = {}
         self.device_ota_in_progress = set()
@@ -869,6 +871,7 @@ class MainWindow(QMainWindow):
 
                     if device_sn:
                         self.device_last_heartbeat[device_sn] = time.time()
+                        self.device_heartbeat_miss_count[device_sn] = 0
                         logger.debug(f"收到设备 {device_sn} 心跳")
         except Exception as e:
             logger.error(f"处理心跳消息失败: {e}")
@@ -880,9 +883,17 @@ class MainWindow(QMainWindow):
         for device_sn, last_heartbeat in list(self.device_last_heartbeat.items()):
             if device_sn in self.device_ota_in_progress:
                 continue
+
             if current_time - last_heartbeat > self.heartbeat_timeout:
-                offline_devices.append(device_sn)
-                logger.warning(f"设备 {device_sn} 心跳超时，已离线")
+                miss_count = self.device_heartbeat_miss_count.get(device_sn, 0)
+                miss_count += 1
+                self.device_heartbeat_miss_count[device_sn] = miss_count
+
+                if miss_count >= self.heartbeat_max_miss:
+                    offline_devices.append(device_sn)
+                    logger.warning(f"设备 {device_sn} 心跳超时 {miss_count} 次，判定为离线")
+                else:
+                    logger.debug(f"设备 {device_sn} 心跳超时 {miss_count}/{self.heartbeat_max_miss} 次")
 
         for device_sn in offline_devices:
             self.device_removed_signal.emit(device_sn)
@@ -914,6 +925,7 @@ class MainWindow(QMainWindow):
             logger.info(f"发现设备: {device.get_display_name()} ({device.ip})")
 
         self.device_last_heartbeat[device.sn] = time.time()
+        self.device_heartbeat_miss_count[device.sn] = 0
         self.device_ip_to_sn[device.ip] = device.sn
 
         if device.sn in self.device_ota_in_progress:
@@ -933,6 +945,10 @@ class MainWindow(QMainWindow):
 
         del self.devices[device_sn]
         self.device_list_panel.remove_device(device_sn)
+
+        # 清理心跳数据
+        self.device_last_heartbeat.pop(device_sn, None)
+        self.device_heartbeat_miss_count.pop(device_sn, None)
 
         if self.selected_device_sn == device_sn:
             self.selected_device_sn = None
