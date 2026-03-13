@@ -72,12 +72,18 @@ class MQTTClient:
         if rc == 0:
             self.connected = True
             logger.info("MQTT连接成功")
-            
-            self.client.subscribe("+/+/reply", qos=1)
-            self.client.subscribe("+/+/status", qos=1)
-            self.client.subscribe("+/+/event", qos=1)
-            logger.info("订阅主题: +/+/reply, +/+/status, +/+/event")
-            
+
+            if self.device_sn == "broadcast":
+                self.client.subscribe("+/+/reply", qos=1)
+                self.client.subscribe("+/+/status", qos=1)
+                self.client.subscribe("+/+/event", qos=1)
+                logger.info("订阅主题: +/+/reply, +/+/status, +/+/event")
+            else:
+                self.client.subscribe(self.reply_topic, qos=1)
+                self.client.subscribe(self.status_topic, qos=1)
+                self.client.subscribe(self.event_topic, qos=1)
+                logger.info(f"订阅主题: {self.reply_topic}, {self.status_topic}, {self.event_topic}")
+
             self._connect_event.set()
         else:
             logger.error(f"MQTT连接失败，错误码: {rc}")
