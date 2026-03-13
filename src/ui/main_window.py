@@ -220,7 +220,17 @@ class MainWindow(QMainWindow):
 
         # 设置窗口图标
         import os
-        icon_path = os.path.join(os.path.dirname(__file__), 'icon', 'vdian.ico')
+        import sys
+
+        # 获取资源文件路径（兼容打包后的环境）
+        if getattr(sys, 'frozen', False):
+            # 打包后的环境
+            base_path = sys._MEIPASS
+        else:
+            # 开发环境
+            base_path = os.path.dirname(__file__)
+
+        icon_path = os.path.join(base_path, 'icon', 'vdian.ico')
         if os.path.exists(icon_path):
             self.setWindowIcon(QIcon(icon_path))
 
