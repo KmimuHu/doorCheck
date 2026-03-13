@@ -31,19 +31,38 @@ class CountdownDialog(QDialog):
         super().__init__(parent)
         self.setWindowTitle('测试进行中')
         self.setModal(True)
-        self.setFixedSize(400, 150)
+        self.setFixedSize(450, 200)
+
+        # 设置窗口样式
+        self.setStyleSheet("""
+            QDialog {
+                background-color: #ffffff;
+                border-radius: 10px;
+            }
+            QLabel {
+                background-color: transparent;
+            }
+        """)
 
         layout = QVBoxLayout()
+        layout.setSpacing(20)
+        layout.setContentsMargins(30, 30, 30, 30)
 
         self.message_label = QLabel('正在测试...')
         self.message_label.setAlignment(Qt.AlignCenter)
-        self.message_label.setFont(QFont('Microsoft YaHei', 12))
+        self.message_label.setFont(QFont('Microsoft YaHei', 14))
+        self.message_label.setStyleSheet('color: #333333; padding: 10px;')
         layout.addWidget(self.message_label)
 
         self.countdown_label = QLabel('')
         self.countdown_label.setAlignment(Qt.AlignCenter)
-        self.countdown_label.setFont(QFont('Microsoft YaHei', 24, QFont.Bold))
-        self.countdown_label.setStyleSheet('color: #f44336;')
+        self.countdown_label.setFont(QFont('Microsoft YaHei', 36, QFont.Bold))
+        self.countdown_label.setStyleSheet("""
+            color: #2196F3;
+            background-color: #E3F2FD;
+            border-radius: 8px;
+            padding: 15px;
+        """)
         layout.addWidget(self.countdown_label)
 
         self.setLayout(layout)
