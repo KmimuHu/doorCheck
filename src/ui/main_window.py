@@ -50,13 +50,13 @@ class CountdownDialog(QDialog):
 
         self.message_label = QLabel('正在测试...')
         self.message_label.setAlignment(Qt.AlignCenter)
-        self.message_label.setFont(QFont('Microsoft YaHei', 14))
+        self.message_label.setFont(QFont('Microsoft YaHei', 12))
         self.message_label.setStyleSheet('color: #333333; padding: 10px;')
         layout.addWidget(self.message_label)
 
         self.countdown_label = QLabel('')
         self.countdown_label.setAlignment(Qt.AlignCenter)
-        self.countdown_label.setFont(QFont('Microsoft YaHei', 36, QFont.Bold))
+        self.countdown_label.setFont(QFont('Microsoft YaHei', 18, QFont.Bold))
         self.countdown_label.setStyleSheet("""
             color: #2196F3;
             background-color: #E3F2FD;
