@@ -603,7 +603,9 @@ class TestEngine:
             url = "http://ishop-oqa.weidian.com/api/mac/allocate"
             headers = {
                 "X-API-KEY": "WD_MAC_ALLOC_SECRET",
-                "Content-Type": "application/json"
+                "Content-Type": "application/json",
+                "Accept": "*/*",
+                "User-Agent": "doorChecker/1.0"
             }
             data = {
                 "sn": device_sn,
