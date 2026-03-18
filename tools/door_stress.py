@@ -10,8 +10,8 @@ from datetime import datetime
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from src.communication.mqtt_client import MQTTClient
-from src.protocol.message import OpenDoorMessage, CloseDoorMessage
+from src.network.mqtt_client import MQTTClient
+from src.core.protocol_message import OpenDoorMessage, CloseDoorMessage
 from src.utils.config import Config
 
 
