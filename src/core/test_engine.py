@@ -23,13 +23,22 @@ class TestEngine:
         self.result = TestResult()
         self.current_response = None
         self.response_event = threading.Event()
+        self.emergency_event = threading.Event()
         self.on_progress_callback = None
-        
+
         self.mqtt_client.register_callback("test_engine", self._on_message_received)
 
     def _on_message_received(self, topic: str, message: Dict):
         logger.debug(f"测试引擎收到消息: {topic}")
-        if "reply" in topic or "status" in topic:
+        if "event" in topic:
+            action = message.get('header', {}).get('action', '')
+            logger.debug(f"事件消息action: {action}")
+            if action == "emergency_switch":
+                emergency_status = message.get('body', {}).get('emergencyStatus', '')
+                logger.info(f"收到应急开关事件通知: emergencyStatus={emergency_status}")
+                if str(emergency_status) == "1":
+                    self.emergency_event.set()
+        elif "reply" in topic or "status" in topic:
             action = message.get('header', {}).get('action', '')
             logger.debug(f"消息action: {action}")
             self.current_response = message
@@ -358,75 +367,69 @@ class TestEngine:
 
     def test_emergency_switch(self, timeout: int = 10, report_callback: Callable = None) -> bool:
         self._report_progress("【步骤3】测试应急开关功能")
-        
+
         current_state = self._query_door_state()
         if not current_state:
             self.result.add_step("检查初始门锁状态", False, "查询状态失败")
             return False
-        
+
         logger.info(f"当前门锁状态: {current_state}")
-        
+
         if current_state in ["opened", "unlocked"]:
             logger.info("门锁处于开启状态，执行上锁指令")
             self._report_progress("门锁处于开启状态，执行上锁指令")
-            
+
             close_msg = CloseDoorMessage(self.config.device_psk)
             if not self.mqtt_client.publish(close_msg.to_json()):
                 self.result.add_step("发送上锁指令", False, "发送失败")
                 return False
-            
+
             self.result.add_step("发送上锁指令", True)
-            
+
             response = self._wait_for_response(self.config.test_timeout)
             if not response:
                 self.result.add_step("等待上锁响应", False, "超时")
                 return False
-            
+
             self.result.add_step("等待上锁响应", True)
-            
+
             time.sleep(1)
-            
+
             if not self._verify_door_state("closed"):
                 self.result.add_step("验证上锁状态", False, "上锁失败")
                 return False
-            
+
             self.result.add_step("验证上锁状态", True)
         else:
             self.result.add_step("检查初始门锁状态", True, "门锁已处于关闭状态")
-        
+
         logger.info("门锁已上锁，等待用户按应急开关...")
         self._report_progress("请按应急开关进行测试，等待检测中...")
-        
+
+        # 清除之前可能残留的应急开关事件
+        self.emergency_event.clear()
+
         start_time = time.time()
         emergency_success = False
-        last_query_time = 0
-        query_interval = 0.5
-        
+
         while time.time() - start_time < timeout:
             current_time = time.time()
-            
+
             if report_callback:
                 remaining = timeout - (current_time - start_time)
                 if remaining > 0:
                     report_callback("emergency_countdown", int(remaining) + 1)
-            
-            if current_time - last_query_time >= query_interval:
-                actual_state = self._query_door_state(timeout=2)
-                last_query_time = current_time
-                
-                if actual_state in ["opened", "unlocked"]:
-                    logger.info(f"✓ 检测到开门状态: {actual_state}，应急开关功能正常")
-                    emergency_success = True
-                    break
-                
-                logger.debug(f"当前状态: {actual_state}，继续查询...")
-            
-            time.sleep(0.1)
-        
+
+            # 等待应急开关事件通知（固件master在线时只发通知不开门）
+            if self.emergency_event.wait(timeout=0.3):
+                logger.info("✓ 收到应急开关事件通知，应急开关功能正常")
+                emergency_success = True
+                break
+
         if not emergency_success:
-            self.result.add_step("验证应急开关", False, f"{timeout}秒内未检测到开门状态")
+            self.result.add_step("验证应急开关", False, f"{timeout}秒内未收到应急开关事件通知")
             return False
-        
+
         self.result.add_step("验证应急开关", True)
         return True
 
