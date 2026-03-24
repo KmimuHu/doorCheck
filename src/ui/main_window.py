@@ -115,21 +115,19 @@ class OTAThread(QThread):
     log_signal = pyqtSignal(str)
     finished_signal = pyqtSignal(bool)
 
-    def __init__(self, test_engine, tftp_server_ip, tftp_port, firmware_name, file_size):
+    def __init__(self, test_engine, tftp_server_ip, tftp_port, firmware_name):
         super().__init__()
         self.test_engine = test_engine
         self.tftp_server_ip = tftp_server_ip
         self.tftp_port = tftp_port
         self.firmware_name = firmware_name
-        self.file_size = file_size
 
     def run(self):
         try:
             success = self.test_engine.test_ota_upgrade(
                 self.tftp_server_ip,
                 self.tftp_port,
-                self.firmware_name,
-                self.file_size
+                self.firmware_name
             )
             if success:
                 self.log_signal.emit("✅ OTA升级指令已接受，设备正在下载固件")
@@ -643,13 +641,12 @@ class MainWindow(QMainWindow):
             test_engine = TestEngine(mqtt_client, self.config)
 
             self.device_detail_panel.append_log("正在发送OTA升级指令...")
-            file_size = len(self.tftp_server.firmware_data)
 
             self.device_ota_in_progress.add(device.sn)
             self.device_detail_panel.progress_bar.setVisible(True)
             self.device_detail_panel.progress_bar.setValue(0)
 
-            ota_thread = OTAThread(test_engine, tftp_server_ip, tftp_port, self.current_firmware_name, file_size)
+            ota_thread = OTAThread(test_engine, tftp_server_ip, tftp_port, self.current_firmware_name)
             ota_thread.log_signal.connect(lambda msg: self._emit_ota_log(device.sn, msg))
             ota_thread.finished_signal.connect(lambda success: self._on_ota_finished(device.sn, success))
             ota_thread.start()

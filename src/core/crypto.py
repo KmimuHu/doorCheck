@@ -1,16 +1,20 @@
 import hmac
 import hashlib
-import uuid
-import secrets
+import random
+import string
+import time
 import base64
 
 
-def generate_nonce(length: int = 16) -> str:
-    return secrets.token_hex(length // 2)
+def generate_nonce(length: int = 32) -> str:
+    chars = string.ascii_uppercase + string.digits
+    return ''.join(random.choices(chars, k=length))
 
 
-def generate_message_id() -> str:
-    return uuid.uuid4().hex
+def generate_message_id(action: str) -> str:
+    ts = int(time.time())
+    rand = random.randint(1000, 9999)
+    return f"cmd-{action}-{ts}-{rand}"
 
 
 def calculate_hmac_signature(data: str, key: str) -> str:

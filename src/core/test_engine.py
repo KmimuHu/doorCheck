@@ -433,10 +433,10 @@ class TestEngine:
         self.result.add_step("验证应急开关", True)
         return True
 
-    def test_ota_upgrade(self, tftp_server: str, tftp_port: int = 69, firmware_file: str = "update.fwpkg", file_size: int = 0) -> bool:
+    def test_ota_upgrade(self, tftp_server: str, tftp_port: int = 69, firmware_file: str = "update.fwpkg") -> bool:
         self._report_progress(f"【OTA升级】开始固件升级: {tftp_server}:{tftp_port}/{firmware_file}")
-        
-        ota_msg = OTAUpgradeMessage(self.config.device_psk, tftp_server, tftp_port, firmware_file, file_size)
+
+        ota_msg = OTAUpgradeMessage(self.config.device_psk, tftp_server, tftp_port, firmware_file)
         if not self.mqtt_client.publish(ota_msg.to_json()):
             logger.error("发送OTA升级指令失败")
             return False
