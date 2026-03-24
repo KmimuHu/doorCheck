@@ -112,15 +112,10 @@ class MQTTClient:
             return False
 
         try:
-            logger.debug(f"准备发送消息: {message[:200]}...")
             result = self.client.publish(self.command_topic, message, qos=1)
             result.wait_for_publish(timeout=5)
-            if result.rc == mqtt.MQTT_ERR_SUCCESS:
-                logger.info(f"消息发送成功到 {self.command_topic}")
-                return True
-            else:
-                logger.error(f"消息发送失败，错误码: {result.rc}")
-                return False
+            logger.info(f"消息已发送到 {self.command_topic}")
+            return True
         except Exception as e:
             logger.error(f"发送消息异常: {e}")
             return False
