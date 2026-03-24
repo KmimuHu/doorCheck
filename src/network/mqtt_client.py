@@ -110,14 +110,19 @@ class MQTTClient:
         if not self.connected:
             logger.error("MQTT未连接")
             return False
-        
+
         try:
+            logger.debug(f"准备发送消息: {message[:200]}...")
             result = self.client.publish(self.command_topic, message, qos=1)
-            result.wait_for_publish()
-            logger.info(f"发送消息到 {self.command_topic}: {message}")
-            return True
+            result.wait_for_publish(timeout=5)
+            if result.rc == mqtt.MQTT_ERR_SUCCESS:
+                logger.info(f"消息发送成功到 {self.command_topic}")
+                return True
+            else:
+                logger.error(f"消息发送失败，错误码: {result.rc}")
+                return False
         except Exception as e:
-            logger.error(f"发送消息失败: {e}")
+            logger.error(f"发送消息异常: {e}")
             return False
 
     def register_callback(self, name: str, callback: Callable):

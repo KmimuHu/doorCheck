@@ -435,41 +435,53 @@ class TestEngine:
 
     def test_ota_upgrade(self, tftp_server: str, tftp_port: int = 69, firmware_file: str = "update.fwpkg", file_size: int = 0) -> bool:
         self._report_progress(f"【OTA升级】开始固件升级: {tftp_server}:{tftp_port}/{firmware_file}")
-        
-        ota_msg = OTAUpgradeMessage(self.config.device_psk, tftp_server, tftp_port, firmware_file, file_size)
-        if not self.mqtt_client.publish(ota_msg.to_json()):
-            logger.error("发送OTA升级指令失败")
-            return False
-        
-        logger.info("OTA升级指令已发送，等待设备响应...")
-        
-        start_time = time.time()
-        timeout = 1000
-        
-        while time.time() - start_time < timeout:
-            response = self._wait_for_response(timeout=5)
-            if response:
-                header = response.get('header', {})
-                action = header.get('action', '')
-                code = header.get('code', -1)
-                
-                logger.debug(f"收到响应: action={action}, code={code}")
-                
-                if action == 'ota_upgrade':
-                    logger.debug(f"OTA升级响应: code={code}, body={response.get('body', {})}")
-                    
-                    if code == 0:
-                        logger.info("✓ OTA升级指令已接受，设备开始下载固件")
-                        self._report_progress("OTA升级指令已接受，设备正在下载固件...")
-                        return True
+
+        max_retries = 3
+        for attempt in range(max_retries):
+            if attempt > 0:
+                logger.warning(f"OTA升级重试 {attempt}/{max_retries-1}")
+                self._report_progress(f"OTA升级重试 {attempt}/{max_retries-1}...")
+                time.sleep(2)
+
+            ota_msg = OTAUpgradeMessage(self.config.device_psk, tftp_server, tftp_port, firmware_file, file_size)
+            msg_json = ota_msg.to_json()
+            logger.info(f"OTA消息内容: {msg_json}")
+
+            if not self.mqtt_client.publish(msg_json):
+                logger.error("发送OTA升级指令失败")
+                continue
+
+            logger.info("OTA升级指令已发送，等待设备响应...")
+
+            start_time = time.time()
+            timeout = 10
+
+            while time.time() - start_time < timeout:
+                response = self._wait_for_response(timeout=5)
+                if response:
+                    header = response.get('header', {})
+                    action = header.get('action', '')
+                    code = header.get('code', -1)
+
+                    logger.debug(f"收到响应: action={action}, code={code}")
+
+                    if action == 'ota_upgrade':
+                        logger.info(f"收到OTA升级响应: code={code}, body={response.get('body', {})}")
+
+                        if code == 0:
+                            logger.info("✓ OTA升级指令已接受，设备开始下载固件")
+                            self._report_progress("OTA升级指令已接受，设备正在下载固件...")
+                            return True
+                        else:
+                            error_msg = response.get('body', {}).get('error', 'Unknown error')
+                            logger.error(f"✗ OTA升级失败 (code={code}): {error_msg}")
+                            break
                     else:
-                        error_msg = response.get('body', {}).get('error', 'Unknown error')
-                        logger.error(f"✗ OTA升级失败 (code={code}): {error_msg}")
-                        return False
-                else:
-                    logger.debug(f"忽略非OTA响应: {action}")
-        
-        logger.error("OTA升级响应超时")
+                        logger.debug(f"忽略非OTA响应: {action}")
+
+            logger.warning(f"OTA升级尝试 {attempt+1} 失败")
+
+        logger.error(f"OTA升级失败，已重试 {max_retries} 次")
         return False
 
     def burn_mac_addresses(self, device_sn: str, progress_callback: Callable = None) -> tuple[bool, str]:

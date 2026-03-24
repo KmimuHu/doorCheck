@@ -40,7 +40,8 @@ class Message:
         }
 
     def to_json(self) -> str:
-        return json.dumps(self.to_dict(), ensure_ascii=False)
+        # 使用紧凑格式，避免额外空格影响固件解析
+        return json.dumps(self.to_dict(), ensure_ascii=False, separators=(',', ':'))
 
 
 class OpenDoorMessage(Message):
@@ -90,8 +91,10 @@ class RemotePairingMessage(Message):
 
 class OTAUpgradeMessage(Message):
     def __init__(self, psk: str, tftp_server: str, tftp_port: int = 69, firmware_file: str = "update.fwpkg", file_size: int = 0, md5: str = None):
+        # 确保tftp_url格式正确，不包含tftp://前缀
+        tftp_url = f"{tftp_server}:{tftp_port}/{firmware_file}"
         body = {
-            "tftp_url": f"{tftp_server}:{tftp_port}/{firmware_file}",
+            "tftp_url": tftp_url,
             "file_size": file_size
         }
         if md5:
