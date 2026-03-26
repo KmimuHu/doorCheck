@@ -1031,6 +1031,11 @@ class MainWindow(QMainWindow):
         client_ip = transfer_id.split(':')[0]
         device_sn = self.device_ip_to_sn.get(client_ip)
 
+        # If IP mapping fails, try to use the currently selected device if it's in OTA progress
+        if not device_sn and self.selected_device_sn in self.device_ota_in_progress:
+            device_sn = self.selected_device_sn
+            logger.debug(f"IP映射失败，使用当前选中设备: {device_sn}")
+
         if not device_sn:
             return
 

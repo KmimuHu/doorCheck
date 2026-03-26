@@ -1,6 +1,6 @@
 app:
   name: "智能门锁产测工具"
-  version: "2.3"
+  version: "2.4"
 
 device:
   psk: "weidian_24h"
