@@ -1,11 +1,11 @@
 import json
 import time
-from typing import Dict, Any, Optional
+from typing import Dict, Any
 from .crypto import generate_nonce, generate_message_id, calculate_hmac_signature, build_sign_data
 
 
 class Message:
-    def __init__(self, action: str, body: Dict[str, Any], psk: str, device_info: Optional[Dict] = None):
+    def __init__(self, action: str, body: Dict[str, Any], psk: str):
         self.ver = "1.0"
         self.mid = generate_message_id()
         self.ts = int(time.time() * 1000)
@@ -13,7 +13,6 @@ class Message:
         self.type = "req"
         self.action = action
         self.body = body
-        self.device = device_info or {}
         self.psk = psk
         self.sig = self._generate_signature()
 
@@ -33,7 +32,6 @@ class Message:
                 "nonce": self.nonce,
                 "type": self.type,
                 "action": self.action,
-                "device": self.device,
                 "sig": self.sig
             },
             "body": self.body
@@ -46,15 +44,13 @@ class Message:
 class OpenDoorMessage(Message):
     def __init__(self, psk: str, duration: int = 5000):
         body = {"duration": duration}
-        device_info = {"sn": "master-001", "model": "MASTER"}
-        super().__init__("open", body, psk, device_info)
+        super().__init__("open", body, psk)
 
 
 class CloseDoorMessage(Message):
     def __init__(self, psk: str):
         body = {}
-        device_info = {"sn": "master-001", "model": "MASTER"}
-        super().__init__("close", body, psk, device_info)
+        super().__init__("close", body, psk)
 
 
 class QueryStatusMessage(Message):
@@ -63,29 +59,25 @@ class QueryStatusMessage(Message):
             "query_type": "status",
             "fields": ["status", "battery", "temperature"]
         }
-        device_info = {"sn": "master-001", "model": "MASTER"}
-        super().__init__("query", body, psk, device_info)
+        super().__init__("query", body, psk)
 
 
 class QueryDeviceSnMessage(Message):
     def __init__(self, psk: str):
         body = {}
-        device_info = {"sn": "master-001", "model": "MASTER"}
-        super().__init__("query_device_sn", body, psk, device_info)
+        super().__init__("query_device_sn", body, psk)
 
 
 class DiscoverMessage(Message):
     def __init__(self, psk: str):
         body = {}
-        device_info = {"sn": "master-001", "model": "MASTER"}
-        super().__init__("discover", body, psk, device_info)
+        super().__init__("discover", body, psk)
 
 
 class RemotePairingMessage(Message):
     def __init__(self, psk: str, duration: int = 100):
         body = {"duration": duration}
-        device_info = {"sn": "master-001", "model": "MASTER"}
-        super().__init__("remote_pairing", body, psk, device_info)
+        super().__init__("remote_pairing", body, psk)
 
 
 class OTAUpgradeMessage(Message):
@@ -96,40 +88,34 @@ class OTAUpgradeMessage(Message):
         }
         if md5:
             body["md5"] = md5
-        device_info = {"sn": "master-001", "model": "MASTER"}
-        super().__init__("ota_upgrade", body, psk, device_info)
+        super().__init__("ota_upgrade", body, psk)
 
 
 class WriteWifiBleMacMessage(Message):
     def __init__(self, psk: str, mac: str):
         body = {"mac": mac}
-        device_info = {"sn": "master-001", "model": "MASTER"}
-        super().__init__("write_wifi_ble_mac", body, psk, device_info)
+        super().__init__("write_wifi_ble_mac", body, psk)
 
 
 class ReadWifiBleMaxMessage(Message):
     def __init__(self, psk: str):
         body = {}
-        device_info = {"sn": "master-001", "model": "MASTER"}
-        super().__init__("read_wifi_ble_mac", body, psk, device_info)
+        super().__init__("read_wifi_ble_mac", body, psk)
 
 
 class WriteSleMaxMessage(Message):
     def __init__(self, psk: str, mac: str):
         body = {"mac": mac}
-        device_info = {"sn": "master-001", "model": "MASTER"}
-        super().__init__("write_sle_mac", body, psk, device_info)
+        super().__init__("write_sle_mac", body, psk)
 
 
 class ReadSleMaxMessage(Message):
     def __init__(self, psk: str):
         body = {}
-        device_info = {"sn": "master-001", "model": "MASTER"}
-        super().__init__("read_sle_mac", body, psk, device_info)
+        super().__init__("read_sle_mac", body, psk)
 
 
 class ResetConfigMessage(Message):
     def __init__(self, psk: str):
         body = {}
-        device_info = {"sn": "master-001", "model": "MASTER"}
-        super().__init__("reset_config", body, psk, device_info)
+        super().__init__("reset_config", body, psk)
