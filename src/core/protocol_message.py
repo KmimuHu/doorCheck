@@ -38,7 +38,7 @@ class Message:
         }
 
     def to_json(self) -> str:
-        return json.dumps(self.to_dict(), ensure_ascii=False, separators=(',', ':'))
+        return json.dumps(self.to_dict(), ensure_ascii=False)
 
 
 class OpenDoorMessage(Message):
@@ -89,6 +89,9 @@ class OTAUpgradeMessage(Message):
         if md5:
             body["md5"] = md5
         super().__init__("ota_upgrade", body, psk)
+
+    def to_json(self) -> str:
+        return json.dumps(self.to_dict(), ensure_ascii=False, separators=(',', ':'))
 
 
 class WriteWifiBleMacMessage(Message):
