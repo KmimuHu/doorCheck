@@ -90,9 +90,6 @@ class OTAUpgradeMessage(Message):
             body["md5"] = md5
         super().__init__("ota_upgrade", body, psk)
 
-    def to_json(self) -> str:
-        return json.dumps(self.to_dict(), ensure_ascii=False, separators=(',', ':'))
-
 
 class WriteWifiBleMacMessage(Message):
     def __init__(self, psk: str, mac: str):
