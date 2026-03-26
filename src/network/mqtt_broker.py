@@ -9,6 +9,33 @@ from ..utils.logger import logger
 from ..utils.paths import get_app_dir
 
 
+def _patch_amqtt_mqtt31_support():
+    """Monkey-patch amqtt 使其同时支持 MQTT v3.1 (MQIsdp) 和 v3.1.1 (MQTT)。
+    amqtt 默认只接受 proto_name="MQTT" + proto_level=4，
+    而嵌入式设备可能使用 MQTT v3.1（proto_name="MQIsdp", proto_level=3）。
+    通过 patch ConnectVariableHeader.from_stream，在解析阶段将 v3.1 转换为 v3.1.1。"""
+    import amqtt.mqtt.protocol.broker_handler as bh
+
+    if getattr(bh, '_mqtt31_patched', False):
+        return
+
+    from amqtt.mqtt.connect import ConnectVariableHeader
+    _orig_from_stream = ConnectVariableHeader.from_stream
+
+    @classmethod
+    async def _patched_from_stream(cls, reader, fixed_header):
+        result = await _orig_from_stream.__func__(cls, reader, fixed_header)
+        if result.proto_name == "MQIsdp" and result.proto_level == 3:
+            logger.debug("MQTT v3.1 客户端连接，自动转换为 v3.1.1 兼容模式")
+            result.proto_name = "MQTT"
+            result.proto_level = 4
+        return result
+
+    ConnectVariableHeader.from_stream = _patched_from_stream
+    bh._mqtt31_patched = True
+    logger.info("已启用 MQTT v3.1 (MQIsdp) 兼容支持")
+
+
 def _enable_legacy_ssl_ciphers():
     """Patch ssl.create_default_context 使其创建的上下文包含传统密码套件。
     OpenSSL 3.0 默认只提供 GCM/CHACHA20，而嵌入式设备 mbedtls 需要 AES-CBC-SHA 等旧套件。
@@ -65,14 +92,14 @@ class MQTTBrokerManager:
                         logger.info(f"已清理占用端口{self.port}的进程: PID={pid}")
         except Exception as e:
             logger.warning(f"清理端口失败: {e}")
-    
+
     async def _start_broker(self):
         try:
             app_dir = get_app_dir()
             ca_file = os.path.join(app_dir, 'certs', 'ca.crt')
             cert_file = os.path.join(app_dir, 'certs', 'mqtt_server.crt')
             key_file = os.path.join(app_dir, 'certs', 'mqtt_server.key')
-            
+
             config = {
                 'listeners': {},
                 'sys_interval': 10,
@@ -84,7 +111,7 @@ class MQTTBrokerManager:
                     'enabled': False
                 }
             }
-            
+
             if self.ssl_enabled and os.path.exists(ca_file) and os.path.exists(cert_file) and os.path.exists(key_file):
                 config['listeners']['default'] = {
                     'type': 'tcp',
@@ -101,22 +128,23 @@ class MQTTBrokerManager:
                     'bind': f'{self.host}:{self.port}'
                 }
                 logger.info(f"MQTT Broker 非SSL模式")
-            
+
             _enable_legacy_ssl_ciphers()
+            _patch_amqtt_mqtt31_support()
             self.broker = Broker(config)
             await self.broker.start()
-            
+
             protocol = "SSL/TCP" if self.ssl_enabled else "TCP"
             logger.info(f"MQTT Broker已启动 ({protocol}): {self.host}:{self.port}")
             self.running = True
-            
+
             while self.running:
                 await asyncio.sleep(1)
-                
+
         except Exception as e:
             logger.error(f"MQTT Broker启动失败: {e}")
             raise
-    
+
     def start(self):
         try:
             self._cleanup_port()
@@ -132,11 +160,11 @@ class MQTTBrokerManager:
         finally:
             if self.loop:
                 self.loop.close()
-    
+
     async def _stop_broker(self):
         if self.broker:
             await self.broker.shutdown()
-    
+
     def stop(self):
         self.running = False
         if self.broker and self.loop:

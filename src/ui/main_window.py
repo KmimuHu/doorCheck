@@ -88,6 +88,7 @@ class TestThread(QThread):
     progress_signal = pyqtSignal(str)
     finished_signal = pyqtSignal(object)
     countdown_signal = pyqtSignal(str, int)
+    test_item_signal = pyqtSignal(str, str, str)  # test_name, status, message
 
     def __init__(self, test_engine):
         super().__init__()
@@ -107,6 +108,7 @@ class TestThread(QThread):
 
     def run(self):
         self.test_engine.set_progress_callback(lambda msg: self.progress_signal.emit(msg))
+        self.test_engine.set_test_item_callback(lambda name, status, msg: self.test_item_signal.emit(name, status, msg))
         result = self.test_engine.run_full_test(report_callback=self._report_callback)
         self.finished_signal.emit(result)
 
@@ -350,6 +352,7 @@ class MainWindow(QMainWindow):
             test_thread = TestThread(test_engine)
             test_thread.progress_signal.connect(self.device_detail_panel.append_log)
             test_thread.countdown_signal.connect(self._on_countdown_update)
+            test_thread.test_item_signal.connect(self._on_test_item_update)
             test_thread.finished_signal.connect(lambda result: self._on_test_finished(result, device))
             test_thread.start()
 
@@ -368,6 +371,9 @@ class MainWindow(QMainWindow):
             self.countdown_dialog.update_message(message, countdown)
             if not self.countdown_dialog.isVisible():
                 self.countdown_dialog.show()
+
+    def _on_test_item_update(self, test_name: str, status: str, message: str):
+        self.device_detail_panel.update_test_result(test_name, status, message)
 
     def _on_test_finished(self, result, device):
         if self.countdown_dialog:
@@ -1030,11 +1036,6 @@ class MainWindow(QMainWindow):
     def _on_ota_progress_update(self, transfer_id: str, progress: int, sent_bytes: int, total_bytes: int):
         client_ip = transfer_id.split(':')[0]
         device_sn = self.device_ip_to_sn.get(client_ip)
-
-        # If IP mapping fails, try to use the currently selected device if it's in OTA progress
-        if not device_sn and self.selected_device_sn in self.device_ota_in_progress:
-            device_sn = self.selected_device_sn
-            logger.debug(f"IP映射失败，使用当前选中设备: {device_sn}")
 
         if not device_sn:
             return
