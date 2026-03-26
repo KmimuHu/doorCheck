@@ -1041,7 +1041,7 @@ class MainWindow(QMainWindow):
             return
 
         last_progress = self.device_ota_progress.get(device_sn, -1)
-        if progress != last_progress and progress % 5 == 0:
+        if progress > last_progress and (progress // 5 > last_progress // 5 or last_progress < 0):
             self.device_ota_progress[device_sn] = progress
 
             # Only update UI if this device is currently selected

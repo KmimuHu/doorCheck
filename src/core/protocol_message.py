@@ -8,7 +8,7 @@ class Message:
     def __init__(self, action: str, body: Dict[str, Any], psk: str, device_info: Optional[Dict] = None):
         self.ver = "1.0"
         self.mid = generate_message_id()
-        self.ts = int(time.time())
+        self.ts = int(time.time() * 1000)
         self.nonce = generate_nonce()
         self.type = "req"
         self.action = action
@@ -91,7 +91,7 @@ class RemotePairingMessage(Message):
 class OTAUpgradeMessage(Message):
     def __init__(self, psk: str, tftp_server: str, tftp_port: int = 69, firmware_file: str = "update.fwpkg", file_size: int = 0, md5: str = None):
         body = {
-            "tftp_url": f"{tftp_server}:{tftp_port}/{firmware_file}",
+            "tftp_url": f"tftp://{tftp_server}:{tftp_port}/{firmware_file}",
             "file_size": file_size
         }
         if md5:
