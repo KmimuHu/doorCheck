@@ -81,14 +81,30 @@ class RemotePairingMessage(Message):
 
 
 class OTAUpgradeMessage(Message):
-    def __init__(self, psk: str, tftp_server: str, tftp_port: int = 69, firmware_file: str = "update.fwpkg", file_size: int = 0, md5: str = None):
+    def __init__(self, psk: str, tftp_server: str, tftp_port: int = 69, firmware_file: str = "update.fwpkg", file_size: int = 0, md5: str = None, fw_ver: str = None):
         body = {
             "tftp_url": f"tftp://{tftp_server}:{tftp_port}/{firmware_file}",
             "file_size": file_size
         }
         if md5:
             body["md5"] = md5
+        self.fw_ver = fw_ver
         super().__init__("ota_upgrade", body, psk)
+
+    def to_json(self) -> str:
+        if self.fw_ver and self._version_in_range(self.fw_ver, "1.0.3", "1.0.6"):
+            return json.dumps(self.to_dict(), ensure_ascii=False, separators=(',', ':'))
+        return super().to_json()
+
+    @staticmethod
+    def _version_in_range(version: str, min_ver: str, max_ver: str) -> bool:
+        def parse_version(v: str):
+            return tuple(map(int, v.split('.')))
+        try:
+            ver = parse_version(version)
+            return parse_version(min_ver) <= ver < parse_version(max_ver)
+        except:
+            return False
 
 
 class WriteWifiBleMacMessage(Message):
