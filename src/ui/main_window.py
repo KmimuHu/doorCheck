@@ -1323,8 +1323,8 @@ class MainWindow(QMainWindow):
                             device.fw_ver = device_info.get("fw_ver", device.fw_ver)
                             device.model = device_info.get("model", device.model)
 
-                            # 更新MQTT连接状态，显示MQTT服务器IP
-                            mqtt_broker_ip = self.config.mqtt_broker
+                            # 更新MQTT连接状态，显示实际的MQTT服务器IP
+                            mqtt_broker_ip = self._get_local_broker_ip()
                             self.device_list_panel.update_device_mqtt_status(device_sn, True, mqtt_broker_ip)
                         else:
                             pending_device = self.pending_discovered_devices.get(device_sn)
@@ -1406,8 +1406,8 @@ class MainWindow(QMainWindow):
         self.device_heartbeat_miss_count[device.sn] = 0
         self.device_ip_to_sn[device.ip] = device.sn
 
-        # Update MQTT status
-        self.device_list_panel.update_device_mqtt_status(device.sn, True, self.config.mqtt_broker)
+        # Update MQTT status - 使用实际的本地Broker IP
+        self.device_list_panel.update_device_mqtt_status(device.sn, True, self._get_local_broker_ip())
 
         if device.sn in self.device_ota_in_progress:
             self.device_ota_in_progress.discard(device.sn)

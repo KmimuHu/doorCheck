@@ -323,26 +323,28 @@ class TestEngine:
 
         logger.info(f"当前门锁状态: {current_state}")
 
+        # 测试前校验：如果门是开的，直接强制上锁
         if current_state in ["opened", "unlocked"]:
-            logger.info("门锁处于开启状态，执行上锁指令")
-            self._report_progress("门锁处于开启状态，执行上锁指令")
+            logger.info("门锁处于开启状态，强制上锁")
+            self._report_progress("门锁处于开启状态，强制上锁...")
 
             close_msg = CloseDoorMessage(self.config.device_psk)
             response = self._send_and_wait(close_msg)
             if not response:
-                self.result.add_step("等待上锁响应", False, "超时")
+                self.result.add_step("强制上锁响应", False, "超时")
                 return False
 
             resp_status = response.get('body', {}).get('status', '')
             if resp_status not in ("closed", "locked"):
                 if not self._verify_door_state("closed", timeout=2):
-                    self.result.add_step("验证上锁状态", False, "上锁失败")
+                    self.result.add_step("强制上锁状态验证", False, "上锁失败")
                     return False
 
-            self.result.add_step("验证上锁状态", True)
+            self.result.add_step("测试前门锁状态", True, "门已强制上锁")
         else:
-            self.result.add_step("检查初始门锁状态", True, "门锁已处于关闭状态")
+            self.result.add_step("测试前门锁状态", True, "门锁已处于关闭状态")
 
+        # 开始配对测试
         pairing_msg = RemotePairingMessage(self.config.device_psk, duration=pairing_duration)
         response = self._send_and_wait(pairing_msg)
         if not response:
@@ -377,6 +379,9 @@ class TestEngine:
                 last_query_time = current_time
                 if actual_state in ["opened", "unlocked"]:
                     logger.info(f"✓ 检测到开门状态: {actual_state}")
+                    # 门开了，立即隐藏弹窗
+                    if report_callback:
+                        report_callback("hide_dialog", 0)
                     pairing_success = True
                     break
                 logger.debug(f"当前状态: {actual_state}，继续查询...")
@@ -387,7 +392,29 @@ class TestEngine:
             self.result.add_step("验证遥控器配对", False, f"{open_timeout}秒内未检测到开门状态")
             return False
 
-        self.result.add_step("验证遥控器配对", True)
+        self.result.add_step("遥控器开门成功", True)
+
+        # 测试完成后，等待门自动关闭
+        logger.info("遥控器开门成功，等待门体自动关闭...")
+        self._report_progress("遥控器开门成功，等待门体自动关闭...")
+
+        door_closed = False
+        wait_start = time.time()
+        while time.time() - wait_start < 25:
+            time.sleep(2)
+            current_state = self._query_door_state(timeout=3)
+            if current_state in ["closed", "locked"]:
+                logger.info(f"✓ 门体已自动关闭，状态: {current_state}")
+                self._report_progress("✓ 门体已自动关闭，遥控器配对测试完成")
+                door_closed = True
+                break
+            logger.info(f"门体状态: {current_state}，继续等待关闭...")
+
+        if not door_closed:
+            self.result.add_step("等待门体关闭", False, "25秒内门体未自动关闭")
+            return False
+
+        self.result.add_step("验证遥控器配对", True, "遥控器配对成功，门体已自动关闭")
         return True
 
     def test_emergency_switch(self, timeout: int = 10, report_callback: Callable = None) -> bool:
@@ -400,26 +427,28 @@ class TestEngine:
 
         logger.info(f"当前门锁状态: {current_state}")
 
+        # 测试前校验：如果门是开的，直接强制上锁
         if current_state in ["opened", "unlocked"]:
-            logger.info("门锁处于开启状态，执行上锁指令")
-            self._report_progress("门锁处于开启状态，执行上锁指令")
+            logger.info("门锁处于开启状态，强制上锁")
+            self._report_progress("门锁处于开启状态，强制上锁...")
 
             close_msg = CloseDoorMessage(self.config.device_psk)
             response = self._send_and_wait(close_msg)
             if not response:
-                self.result.add_step("等待上锁响应", False, "超时")
+                self.result.add_step("强制上锁响应", False, "超时")
                 return False
 
             resp_status = response.get('body', {}).get('status', '')
             if resp_status not in ("closed", "locked"):
                 if not self._verify_door_state("closed", timeout=2):
-                    self.result.add_step("验证上锁状态", False, "上锁失败")
+                    self.result.add_step("强制上锁状态验证", False, "上锁失败")
                     return False
 
-            self.result.add_step("验证上锁状态", True)
+            self.result.add_step("测试前门锁状态", True, "门已强制上锁")
         else:
-            self.result.add_step("检查初始门锁状态", True, "门锁已处于关闭状态")
+            self.result.add_step("测试前门锁状态", True, "门锁已处于关闭状态")
 
+        # 开始应急开关测试
         logger.info("门锁已上锁，等待用户按应急开关...")
         self._report_progress("请按应急开关进行测试，等待检测中...")
         self.emergency_event.clear()
@@ -444,6 +473,9 @@ class TestEngine:
                     return False
                 self.result.add_step("应急开关开锁", True)
                 logger.info("✓ 应急开关开锁指令已执行，应急开关功能正常")
+                # 开锁成功，立即隐藏弹窗
+                if report_callback:
+                    report_callback("hide_dialog", 0)
                 emergency_success = True
                 break
 
@@ -451,7 +483,7 @@ class TestEngine:
             self.result.add_step("验证应急开关", False, f"{timeout}秒内未收到应急开关事件通知")
             return False
 
-        self.result.add_step("验证应急开关", True)
+        self.result.add_step("验证应急开关", True, "应急开关功能正常")
         return True
 
     def test_ota_upgrade(self, tftp_server: str, tftp_port: int = 69, firmware_file: str = "update.fwpkg",
