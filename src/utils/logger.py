@@ -1,7 +1,16 @@
 import logging
 import os
+import sys
 from datetime import datetime
 from .paths import get_app_dir
+
+
+def get_executable_dir():
+    """获取可执行文件所在目录"""
+    if getattr(sys, 'frozen', False):
+        return os.path.dirname(sys.executable)
+    else:
+        return os.path.dirname(os.path.dirname(os.path.dirname(__file__)))
 
 
 class Logger:
@@ -21,9 +30,9 @@ class Logger:
         log_dir = os.path.join(get_app_dir(), 'logs')
         os.makedirs(log_dir, exist_ok=True)
 
-        log_file = os.path.join(log_dir, f'doorcheck_{datetime.now().strftime("%Y%m%d")}.log')
+        log_file = os.path.join(log_dir, f'smart_{datetime.now().strftime("%Y%m%d")}.log')
 
-        self._logger = logging.getLogger('DoorCheck')
+        self._logger = logging.getLogger('SmartDevice')
         self._logger.setLevel(logging.DEBUG)
 
         file_handler = logging.FileHandler(log_file, encoding='utf-8')

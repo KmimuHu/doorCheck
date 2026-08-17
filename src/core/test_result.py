@@ -3,7 +3,7 @@ import threading
 from enum import Enum
 from typing import Callable, Optional
 from ..network.mqtt_client import MQTTClient
-from .protocol_message import OpenDoorMessage, CloseDoorMessage, QueryStatusMessage
+from .protocol import OpenDoorMessage, CloseDoorMessage, QueryStatusMessage
 from ..utils.logger import logger
 from ..utils.config import Config
 

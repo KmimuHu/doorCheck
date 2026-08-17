@@ -1,65 +1,81 @@
 import csv
 import sys
 import time
+import queue
 import threading
 import requests
 from typing import Callable, Optional, Dict
 from .test_result import TestResult, TestStatus
 from ..network.mqtt_client import MQTTClient
-from .protocol_message import (OpenDoorMessage, CloseDoorMessage, QueryStatusMessage,
+from .protocol import (OpenDoorMessage, CloseDoorMessage, QueryStatusMessage,
                                OTAUpgradeMessage, RemotePairingMessage,
                                WriteWifiBleMacMessage, ReadWifiBleMaxMessage,
                                WriteSleMaxMessage, ReadSleMaxMessage,
-                               ResetConfigMessage)
+                               ResetConfigMessage,
+                               BleDiscoverMessage, SleDiscoverMessage, WifiDiscoverMessage)
 from ..utils.logger import logger
 from ..utils.config import Config
 from ..utils.paths import get_app_dir
 
 
 class TestEngine:
-    def __init__(self, mqtt_client: MQTTClient, config: Config):
+    def __init__(self, mqtt_client: MQTTClient, config: Config, device_hw_ver: str = None):
         self.mqtt_client = mqtt_client
         self.config = config
         self.result = TestResult()
-        self.current_response = None
-        self.response_event = threading.Event()
         self.emergency_event = threading.Event()
+        self.device_offline_event = threading.Event()
         self.on_progress_callback = None
         self.on_test_item_callback = None
+        self.device_hw_ver = device_hw_ver or ""
 
         self.mqtt_client.register_callback("test_engine", self._on_message_received)
 
     def _on_message_received(self, topic: str, message: Dict):
         logger.debug(f"测试引擎收到消息: {topic}")
+        header_device = message.get('header', {}).get('device', {})
+        if header_device.get('sn') == self.mqtt_client.device_sn:
+            hw_ver = header_device.get('hw_ver', '')
+            if hw_ver:
+                self.device_hw_ver = hw_ver
+
         if "event" in topic:
             action = message.get('header', {}).get('action', '')
-            logger.debug(f"事件消息action: {action}")
             if action == "emergency_switch":
                 emergency_status = message.get('body', {}).get('emergencyStatus', '')
                 logger.info(f"收到应急开关事件通知: emergencyStatus={emergency_status}")
                 if str(emergency_status) == "1":
                     self.emergency_event.set()
-        elif "reply" in topic or "status" in topic:
-            action = message.get('header', {}).get('action', '')
-            logger.debug(f"消息action: {action}")
-            self.current_response = message
-            self.response_event.set()
+            elif action == "offline":
+                reason = message.get('body', {}).get('reason', '')
+                logger.warning(f"设备离线事件: reason={reason}")
+                self.device_offline_event.set()
 
-    def _wait_for_response(self, timeout: int = 10) -> Optional[Dict]:
-        self.response_event.clear()
-        self.current_response = None
+    def close(self):
+        """释放测试引擎注册的MQTT回调，避免后续测试被旧回调干扰。"""
+        self.mqtt_client.unregister_callback("test_engine")
 
-        if self.response_event.wait(timeout):
-            return self.current_response
-        return None
+    def _send_and_wait(self, msg_obj, timeout: int = None) -> Optional[Dict]:
+        """发送消息并等待对应 mid 的响应"""
+        if timeout is None:
+            timeout = self.config.test_timeout
+        payload = msg_obj.to_json()
+        return self.mqtt_client.request(payload, msg_obj.mid, timeout=timeout)
 
     def _query_door_state(self, timeout: int = 5) -> Optional[str]:
-        query_msg = QueryStatusMessage(self.config.device_psk)
-        self.mqtt_client.publish(query_msg.to_json())
+        # 检查设备是否在线
+        if self.device_offline_event.is_set():
+            logger.error("设备已离线，无法查询状态")
+            return None
 
-        response = self._wait_for_response(timeout)
+        query_msg = QueryStatusMessage(self.config.device_psk)
+        response = self._send_and_wait(query_msg, timeout)
         if not response:
-            logger.error("查询状态超时")
+            # 检查是否因为设备离线导致超时
+            if self.device_offline_event.is_set():
+                logger.error("查询状态失败：设备已离线")
+            else:
+                logger.error("查询状态超时")
             return None
 
         body = response.get('body', {})
@@ -95,23 +111,50 @@ class TestEngine:
         if self.on_test_item_callback:
             self.on_test_item_callback(test_name, status, message)
 
+    @staticmethod
+    def _version_tuple(version: str) -> tuple:
+        if not version:
+            return ()
+        parts = []
+        for part in str(version).strip().lstrip('vV').split('.'):
+            digits = ''.join(ch for ch in part if ch.isdigit())
+            parts.append(int(digits) if digits else 0)
+        return tuple(parts)
+
+    @classmethod
+    def _version_gte(cls, version: str, minimum: str) -> bool:
+        current = list(cls._version_tuple(version))
+        target = list(cls._version_tuple(minimum))
+        width = max(len(current), len(target))
+        current.extend([0] * (width - len(current)))
+        target.extend([0] * (width - len(target)))
+        return tuple(current) >= tuple(target)
+
+    def test_hardware_version(self, min_version: str = "1.1") -> bool:
+        self._report_progress(f"【前置检查】硬件版本检查，要求 >= {min_version}")
+
+        if not self.device_hw_ver:
+            message = "未获取到设备硬件版本 hw_ver"
+            self.result.add_step("硬件版本检查", False, message)
+            self._report_progress(f"❌ {message}")
+            return False
+
+        passed = self._version_gte(self.device_hw_ver, min_version)
+        message = f"当前硬件版本 {self.device_hw_ver}，要求 >= {min_version}"
+        self.result.add_step("硬件版本检查", passed, message)
+        self._report_progress(("✅ " if passed else "❌ ") + message)
+        return passed
+
     def test_open_door(self) -> bool:
         self._report_progress("【步骤1】测试开锁功能")
 
         open_msg = OpenDoorMessage(self.config.device_psk, self.config.test_open_duration)
-        if not self.mqtt_client.publish(open_msg.to_json()):
-            self.result.add_step("发送开锁指令", False, "发送失败")
-            return False
-
-        self.result.add_step("发送开锁指令", True)
-
-        response = self._wait_for_response(self.config.test_timeout)
+        response = self._send_and_wait(open_msg)
         if not response:
             self.result.add_step("等待开锁响应", False, "超时")
             return False
 
         self.result.add_step("等待开锁响应", True)
-
         time.sleep(1)
 
         if not self._verify_door_state("opened"):
@@ -125,19 +168,12 @@ class TestEngine:
         self._report_progress("【步骤2】测试关锁功能")
 
         close_msg = CloseDoorMessage(self.config.device_psk)
-        if not self.mqtt_client.publish(close_msg.to_json()):
-            self.result.add_step("发送关锁指令", False, "发送失败")
-            return False
-
-        self.result.add_step("发送关锁指令", True)
-
-        response = self._wait_for_response(self.config.test_timeout)
+        response = self._send_and_wait(close_msg)
         if not response:
             self.result.add_step("等待关锁响应", False, "超时")
             return False
 
         self.result.add_step("等待关锁响应", True)
-
         time.sleep(1)
 
         if not self._verify_door_state("closed"):
@@ -153,109 +189,97 @@ class TestEngine:
         self.result.start_time = time.time()
         failed_tests = []
 
+        # 清除离线标志
+        self.device_offline_event.clear()
+
+        # 等待MQTT连接稳定（避免设备刚连接就收到命令导致崩溃）
+        logger.info("等待MQTT连接稳定...")
+        time.sleep(0.5)
+
         try:
             self._report_progress("开始产测流程...")
 
-            self._report_progress("【步骤1】烧写MAC地址")
-            self._report_test_item("burn_mac", "testing")
-            device_sn = self.mqtt_client.device_sn
-            burn_success, burn_message = self.burn_mac_addresses(device_sn, self._report_progress)
-            if not burn_success:
-                failed_tests.append("MAC地址烧写")
-                self._report_progress(f"⚠️ MAC地址烧写失败: {burn_message}，继续后续测试")
-                self.result.add_step("烧写MAC地址", False, burn_message)
-                self._report_test_item("burn_mac", "failed", burn_message)
-            else:
-                self._report_progress(f"✅ {burn_message}")
-                self.result.add_step("烧写MAC地址", True, burn_message)
-                self._report_test_item("burn_mac", "passed", burn_message)
-
-            time.sleep(1)
-
-            self._report_progress("【步骤2】查询当前门锁状态")
-            current_state = self._query_door_state()
-            if not current_state:
-                self.result.set_failed("查询初始状态失败")
+            t0 = time.time()
+            ok = self.test_hardware_version("1.1")
+            hw_message = self.result.steps[-1]['message'] if self.result.steps else ""
+            self.result.sub_results.append({
+                'test_type': '硬件版本检查',
+                'status': 'passed' if ok else 'failed',
+                'duration': round(time.time() - t0, 2),
+                'steps': [self.result.steps[-1]] if self.result.steps else [],
+            })
+            if not ok:
+                fail_message = "硬件版本检查未通过"
+                self._report_progress(f"\n❌ {fail_message}")
+                self.result.set_failed(fail_message)
                 return self.result
 
-            self.result.add_step("查询初始状态", True, f"当前状态: {current_state}")
-
-            if current_state in ["closed", "locked"]:
-                self._report_progress("门锁当前为关闭状态，先测试开锁")
-                if not self.test_open_door():
-                    failed_tests.append("开锁测试")
-                    self._report_progress("⚠️ 开锁测试失败，继续后续测试")
-
-                time.sleep(1)
-
-                if not self.test_close_door():
-                    failed_tests.append("关锁测试")
-                    self._report_progress("⚠️ 关锁测试失败，继续后续测试")
-            else:
-                self._report_progress("门锁当前为开启状态，先测试关锁")
-                if not self.test_close_door():
-                    failed_tests.append("关锁测试")
-                    self._report_progress("⚠️ 关锁测试失败，继续后续测试")
-
-                time.sleep(1)
-
-                if not self.test_open_door():
-                    failed_tests.append("开锁测试")
-                    self._report_progress("⚠️ 开锁测试失败，继续后续测试")
-
-            time.sleep(1)
-
-            self._report_progress("【步骤3】测试应急开关")
-            self._report_test_item("emergency_switch", "testing")
-            emergency_start_time = time.time()
-            emergency_step_start = len(self.result.steps)
-            emergency_success = self.test_emergency_switch(timeout=10, report_callback=report_callback)
-            emergency_end_time = time.time()
-            emergency_steps = list(self.result.steps[emergency_step_start:])
-            if not emergency_success:
-                failed_tests.append("应急开关测试")
-                self._report_progress("⚠️ 应急开关测试失败，继续后续测试")
-                self._report_test_item("emergency_switch", "failed")
-            else:
-                self._report_progress("✅ 应急开关测试通过，请松开应急开关")
-                self._report_test_item("emergency_switch", "passed")
-                for i in range(3, 0, -1):
-                    if report_callback:
-                        report_callback("transition", i)
-                    time.sleep(1)
-                if report_callback:
-                    report_callback("hide_dialog", 0)
-
-            self.result.sub_results.append({
-                'test_type': '应急开关测试',
-                'status': 'passed' if emergency_success else 'failed',
-                'duration': round(emergency_end_time - emergency_start_time, 2),
-                'steps': emergency_steps,
-            })
-
-            self._report_progress("【步骤4】测试遥控器配对")
+            # ── 阶段一：控制检测 ─────────────────────────────────────────
+            initial_state = self._query_door_state()
             self._report_test_item("remote_pairing", "testing")
-            remote_start_time = time.time()
-            remote_step_start = len(self.result.steps)
-            remote_success = self.test_remote_pairing(pairing_duration=3000, open_timeout=8,
-                                                      report_callback=report_callback)
-            remote_end_time = time.time()
-            remote_steps = list(self.result.steps[remote_step_start:])
-            if not remote_success:
+            t0 = time.time()
+            ok = self.test_remote_pairing(pairing_duration=2000, open_timeout=10,
+                                          report_callback=report_callback,
+                                          initial_state=initial_state)
+            self._report_test_item("remote_pairing", "passed" if ok else "failed")
+            if report_callback:
+                report_callback("hide_dialog", 0)
+            if not ok:
                 failed_tests.append("遥控器配对测试")
-                self._report_progress("⚠️ 遥控器配对测试失败")
-                self._report_test_item("remote_pairing", "failed")
-            else:
-                if report_callback:
-                    report_callback("hide_dialog", 0)
-                self._report_test_item("remote_pairing", "passed")
-
             self.result.sub_results.append({
                 'test_type': '遥控器配对测试',
-                'status': 'passed' if remote_success else 'failed',
-                'duration': round(remote_end_time - remote_start_time, 2),
-                'steps': remote_steps,
+                'status': 'passed' if ok else 'failed',
+                'duration': round(time.time() - t0, 2), 'steps': [],
             })
+
+            self._report_test_item("emergency_switch", "testing")
+            t0 = time.time()
+            ok = self.test_emergency_switch(timeout=10, report_callback=report_callback)
+            self._report_test_item("emergency_switch", "passed" if ok else "failed")
+            if not ok:
+                failed_tests.append("应急开关测试")
+            if report_callback:
+                report_callback("hide_dialog", 0)
+            self.result.sub_results.append({
+                'test_type': '应急开关测试',
+                'status': 'passed' if ok else 'failed',
+                'duration': round(time.time() - t0, 2), 'steps': [],
+            })
+
+            # ── 阶段二：无线检测 ─────────────────────────────────────────
+            self._report_test_item("burn_mac", "testing")
+            t0 = time.time()
+            burn_ok, burn_msg = self.burn_mac_addresses(
+                self.mqtt_client.device_sn, self._report_progress)
+            self.result.add_step("烧写MAC地址", burn_ok, burn_msg)
+            self._report_test_item("burn_mac", "passed" if burn_ok else "failed", burn_msg)
+            if not burn_ok:
+                failed_tests.append(f"MAC地址烧写: {burn_msg}")
+            self.result.sub_results.append({
+                'test_type': '烧写MAC',
+                'status': 'passed' if burn_ok else 'failed',
+                'duration': round(time.time() - t0, 2), 'steps': [],
+            })
+
+            for test_name, test_fn, label in [
+                ("wifi_discover", self.test_wifi_discover, "WiFi检测"),
+                ("ble_discover", self.test_ble_discover, "BLE检测"),
+                ("sle_discover", self.test_sle_discover, "SLE检测"),
+            ]:
+                self._report_test_item(test_name, "testing")
+                t0 = time.time()
+                step_start = len(self.result.steps)
+                ok = test_fn()
+                new_steps = self.result.steps[step_start:]
+                detail = new_steps[-1]['message'] if new_steps else ""
+                self._report_test_item(test_name, "passed" if ok else "failed", detail)
+                if not ok:
+                    failed_tests.append(label)
+                self.result.sub_results.append({
+                    'test_type': label,
+                    'status': 'passed' if ok else 'failed',
+                    'duration': round(time.time() - t0, 2), 'steps': new_steps,
+                })
 
             if failed_tests:
                 fail_message = "以下测试项未通过: " + ", ".join(failed_tests)
@@ -264,7 +288,6 @@ class TestEngine:
             else:
                 self._report_progress("\n✅ 所有测试通过！")
                 self.result.set_passed()
-
 
         except Exception as e:
             logger.error(f"测试异常: {e}")
@@ -279,12 +302,23 @@ class TestEngine:
         self.on_test_item_callback = callback
 
     def test_remote_pairing(self, pairing_duration: int = 3000, open_timeout: int = 8,
-                            report_callback: Callable = None) -> bool:
+                            report_callback: Callable = None, initial_state: str = None) -> bool:
         self._report_progress("【步骤4】测试遥控器配对")
 
-        current_state = self._query_door_state()
+        # 清除离线标志
+        self.device_offline_event.clear()
+
+        # 如果没有传入初始状态，说明是单独调用，需要等待连接稳定
+        if initial_state is None:
+            logger.info("等待MQTT连接稳定...")
+            time.sleep(0.5)
+
+        current_state = initial_state or self._query_door_state()
         if not current_state:
-            self.result.add_step("检查初始门锁状态", False, "查询状态失败")
+            if self.device_offline_event.is_set():
+                self.result.add_step("检查初始门锁状态", False, "设备已离线")
+            else:
+                self.result.add_step("检查初始门锁状态", False, "查询状态失败")
             return False
 
         logger.info(f"当前门锁状态: {current_state}")
@@ -294,85 +328,57 @@ class TestEngine:
             self._report_progress("门锁处于开启状态，执行上锁指令")
 
             close_msg = CloseDoorMessage(self.config.device_psk)
-            if not self.mqtt_client.publish(close_msg.to_json()):
-                self.result.add_step("发送上锁指令", False, "发送失败")
-                return False
-
-            self.result.add_step("发送上锁指令", True)
-
-            response = self._wait_for_response(self.config.test_timeout)
+            response = self._send_and_wait(close_msg)
             if not response:
                 self.result.add_step("等待上锁响应", False, "超时")
                 return False
 
-            self.result.add_step("等待上锁响应", True)
-
-            time.sleep(1)
-
-            if not self._verify_door_state("closed"):
-                self.result.add_step("验证上锁状态", False, "上锁失败")
-                return False
+            resp_status = response.get('body', {}).get('status', '')
+            if resp_status not in ("closed", "locked"):
+                if not self._verify_door_state("closed", timeout=2):
+                    self.result.add_step("验证上锁状态", False, "上锁失败")
+                    return False
 
             self.result.add_step("验证上锁状态", True)
         else:
             self.result.add_step("检查初始门锁状态", True, "门锁已处于关闭状态")
 
         pairing_msg = RemotePairingMessage(self.config.device_psk, duration=pairing_duration)
-        if not self.mqtt_client.publish(pairing_msg.to_json()):
-            self.result.add_step("发送遥控器配对指令", False, "发送失败")
-            return False
-
-        self.result.add_step("发送遥控器配对指令", True)
-        logger.info("遥控器配对命令已发送，等待设备响应")
-
-        response = self._wait_for_response(self.config.test_timeout)
+        response = self._send_and_wait(pairing_msg)
         if not response:
             self.result.add_step("等待配对响应", False, "超时")
             return False
 
         self.result.add_step("等待配对响应", True)
 
-        logger.info("配对命令已响应，开始配对倒计时")
-        self._report_progress("请按遥控器配对按键")
+        # 阶段一：配对倒计时（pairing_duration），提示按配对键
+        pairing_secs = int(pairing_duration / 1000)
+        for remaining in range(pairing_secs, 0, -1):
+            if report_callback:
+                report_callback("pairing_countdown", remaining)
+            time.sleep(1)
 
+        # 阶段二：开门倒计时（open_timeout），检测门是否打开
         if report_callback:
-            pairing_start_time = time.time()
-            pairing_timeout = pairing_duration / 1000.0
-            while time.time() - pairing_start_time < pairing_timeout:
-                remaining = pairing_timeout - (time.time() - pairing_start_time)
-                if remaining > 0:
-                    report_callback("pairing_countdown", int(remaining) + 1)
-                time.sleep(0.1)
-        else:
-            time.sleep(pairing_duration / 1000.0)
-
-        self._report_progress(f"请在{open_timeout}秒内按下遥控器开门")
-
-        logger.info("配对命令已响应，循环查询锁状态...")
-        self._report_progress("循环查询锁状态中...")
+            report_callback("open_countdown", open_timeout)
 
         start_time = time.time()
         pairing_success = False
         last_query_time = 0
-        query_interval = 0.5
 
         while time.time() - start_time < open_timeout:
             current_time = time.time()
+            remaining = open_timeout - int(current_time - start_time)
+            if report_callback and remaining > 0:
+                report_callback("open_countdown", remaining)
 
-            if report_callback:
-                remaining = open_timeout - (current_time - start_time)
-                if remaining > 0:
-                    report_callback("open_countdown", int(remaining) + 1)
-
-            if current_time - last_query_time >= query_interval:
+            if current_time - last_query_time >= 0.5:
                 actual_state = self._query_door_state(timeout=2)
                 last_query_time = current_time
-
                 if actual_state in ["opened", "unlocked"]:
                     logger.info(f"✓ 检测到开门状态: {actual_state}")
                     pairing_success = True
                     break
-
                 logger.debug(f"当前状态: {actual_state}，继续查询...")
 
             time.sleep(0.1)
@@ -399,24 +405,16 @@ class TestEngine:
             self._report_progress("门锁处于开启状态，执行上锁指令")
 
             close_msg = CloseDoorMessage(self.config.device_psk)
-            if not self.mqtt_client.publish(close_msg.to_json()):
-                self.result.add_step("发送上锁指令", False, "发送失败")
-                return False
-
-            self.result.add_step("发送上锁指令", True)
-
-            response = self._wait_for_response(self.config.test_timeout)
+            response = self._send_and_wait(close_msg)
             if not response:
                 self.result.add_step("等待上锁响应", False, "超时")
                 return False
 
-            self.result.add_step("等待上锁响应", True)
-
-            time.sleep(1)
-
-            if not self._verify_door_state("closed"):
-                self.result.add_step("验证上锁状态", False, "上锁失败")
-                return False
+            resp_status = response.get('body', {}).get('status', '')
+            if resp_status not in ("closed", "locked"):
+                if not self._verify_door_state("closed", timeout=2):
+                    self.result.add_step("验证上锁状态", False, "上锁失败")
+                    return False
 
             self.result.add_step("验证上锁状态", True)
         else:
@@ -424,8 +422,6 @@ class TestEngine:
 
         logger.info("门锁已上锁，等待用户按应急开关...")
         self._report_progress("请按应急开关进行测试，等待检测中...")
-
-        # 清除之前可能残留的应急开关事件
         self.emergency_event.clear()
 
         start_time = time.time()
@@ -433,21 +429,16 @@ class TestEngine:
 
         while time.time() - start_time < timeout:
             current_time = time.time()
-
             if report_callback:
                 remaining = timeout - (current_time - start_time)
                 if remaining > 0:
                     report_callback("emergency_countdown", int(remaining) + 1)
 
-            # 等待应急开关事件通知（固件master在线时只发通知不开门，需主动下发开锁指令）
             if self.emergency_event.wait(timeout=0.3):
                 logger.info("✓ 收到应急开关事件通知，下发开锁指令")
                 self._report_progress("收到应急开关事件，正在下发开锁指令...")
                 open_msg = OpenDoorMessage(self.config.device_psk, self.config.test_open_duration)
-                if not self.mqtt_client.publish(open_msg.to_json()):
-                    self.result.add_step("应急开关开锁", False, "发送开锁指令失败")
-                    return False
-                response = self._wait_for_response(self.config.test_timeout)
+                response = self._send_and_wait(open_msg)
                 if not response:
                     self.result.add_step("应急开关开锁", False, "等待开锁响应超时")
                     return False
@@ -472,36 +463,9 @@ class TestEngine:
             logger.error("发送OTA升级指令失败")
             return False
 
-        logger.info("OTA升级指令已发送，等待设备响应...")
-
-        start_time = time.time()
-        timeout = 1000
-
-        while time.time() - start_time < timeout:
-            response = self._wait_for_response(timeout=5)
-            if response:
-                header = response.get('header', {})
-                action = header.get('action', '')
-                code = header.get('code', -1)
-
-                logger.debug(f"收到响应: action={action}, code={code}")
-
-                if action == 'ota_upgrade':
-                    logger.debug(f"OTA升级响应: code={code}, body={response.get('body', {})}")
-
-                    if code == 0:
-                        logger.info("✓ OTA升级指令已接受，设备开始下载固件")
-                        self._report_progress("OTA升级指令已接受，设备正在下载固件...")
-                        return True
-                    else:
-                        error_msg = response.get('body', {}).get('error', 'Unknown error')
-                        logger.error(f"✗ OTA升级失败 (code={code}): {error_msg}")
-                        return False
-                else:
-                    logger.debug(f"忽略非OTA响应: {action}")
-
-        logger.error("OTA升级响应超时")
-        return False
+        logger.info("✓ OTA升级指令已发送，设备将通过TFTP下载固件")
+        self._report_progress("OTA升级指令已发送，设备正在下载固件...")
+        return True
 
     def burn_mac_addresses(self, device_sn: str, progress_callback: Callable = None) -> tuple[bool, str]:
         try:
@@ -723,67 +687,43 @@ class TestEngine:
 
     def _read_wifi_ble_mac(self) -> Optional[str]:
         read_msg = ReadWifiBleMaxMessage(self.config.device_psk)
-        if not self.mqtt_client.publish(read_msg.to_json()):
-            logger.error("发送读取WiFi/BLE MAC指令失败")
-            return None
-
-        response = self._wait_for_response(self.config.test_timeout)
+        response = self._send_and_wait(read_msg)
         if not response:
             logger.error("读取WiFi/BLE MAC响应超时")
             return None
-
-        body = response.get('body', {})
-        wifi_mac = body.get('wifi_mac', '')
+        wifi_mac = response.get('body', {}).get('wifi_mac', '')
         logger.debug(f"读取到WiFi MAC: {wifi_mac}")
         return wifi_mac
 
     def _read_sle_mac(self) -> Optional[str]:
         read_msg = ReadSleMaxMessage(self.config.device_psk)
-        if not self.mqtt_client.publish(read_msg.to_json()):
-            logger.error("发送读取SLE MAC指令失败")
-            return None
-
-        response = self._wait_for_response(self.config.test_timeout)
+        response = self._send_and_wait(read_msg)
         if not response:
             logger.error("读取SLE MAC响应超时")
             return None
-
-        body = response.get('body', {})
-        sle_mac = body.get('mac', '')
+        sle_mac = response.get('body', {}).get('mac', '')
         logger.debug(f"读取到SLE MAC: {sle_mac}")
         return sle_mac
 
     def _write_wifi_ble_mac(self, mac: str) -> bool:
         write_msg = WriteWifiBleMacMessage(self.config.device_psk, mac)
-        if not self.mqtt_client.publish(write_msg.to_json()):
-            logger.error("发送烧写WiFi/BLE MAC指令失败")
-            return False
-
-        response = self._wait_for_response(self.config.test_timeout)
+        response = self._send_and_wait(write_msg)
         if not response:
             logger.error("烧写WiFi/BLE MAC响应超时")
             return False
-
         code = response.get('header', {}).get('code', -1)
         if code == 0:
             logger.info("WiFi/BLE MAC烧写指令执行成功")
             return True
-        else:
-            error_msg = response.get('body', {}).get('error', 'Unknown error')
-            logger.error(f"WiFi/BLE MAC烧写失败: {error_msg}")
-            return False
+        logger.error(f"WiFi/BLE MAC烧写失败: {response.get('body', ).get('error', 'Unknown error')}")
+        return False
 
     def _write_sle_mac(self, mac: str) -> bool:
         write_msg = WriteSleMaxMessage(self.config.device_psk, mac)
-        if not self.mqtt_client.publish(write_msg.to_json()):
-            logger.error("发送烧写SLE MAC指令失败")
-            return False
-
-        response = self._wait_for_response(self.config.test_timeout)
+        response = self._send_and_wait(write_msg)
         if not response:
             logger.error("烧写SLE MAC响应超时")
             return False
-
         code = response.get('header', {}).get('code', -1)
         if code == 0:
             logger.info("SLE MAC烧写指令执行成功")
@@ -793,18 +733,63 @@ class TestEngine:
             logger.error(f"SLE MAC烧写失败: {error_msg}")
             return False
 
+    def test_wifi_discover(self) -> bool:
+        self._report_progress("【无线检测】WiFi AP扫描")
+        msg = WifiDiscoverMessage(self.config.device_psk, self.config.discover_duration)
+        timeout = self.config.discover_duration / 1000 + self.config.test_timeout + 10
+        response = self._send_and_wait(msg, int(timeout))
+        if not response:
+            self.result.add_step("WiFi扫描响应", False, "超时")
+            return False
+        aps = response.get('body', {}).get('aps', [])
+        threshold = self.config.wifi_rssi_threshold
+        strongest = max((ap.get('rssi', -999) for ap in aps), default=-999)
+        passed = any(ap.get('rssi', -999) >= threshold for ap in aps)
+        detail = (
+            f"共{len(aps)}个AP，最强RSSI {strongest}dBm，"
+            f"阈值>={threshold}dBm，{'通过' if passed else '未发现满足条件的AP'}"
+        )
+        self.result.add_step("WiFi扫描结果", passed, detail)
+        self._report_progress(detail)
+        return passed
+
+    def test_ble_discover(self) -> bool:
+        self._report_progress("【无线检测】BLE蓝牙扫描")
+        msg = BleDiscoverMessage(self.config.device_psk, self.config.discover_duration)
+        timeout = self.config.discover_duration / 1000 + self.config.test_timeout
+        response = self._send_and_wait(msg, int(timeout))
+        if not response:
+            self.result.add_step("BLE扫描响应", False, "超时")
+            return False
+        devices = response.get('body', {}).get('devices', [])
+        threshold = self.config.ble_rssi_threshold
+        passed = any(d.get('rssi', -999) > threshold for d in devices)
+        self.result.add_step("BLE扫描结果", passed,
+                             f"共{len(devices)}个设备，阈值>{threshold}dBm，{'通过' if passed else '未发现满足条件的设备'}")
+        return passed
+
+    def test_sle_discover(self) -> bool:
+        self._report_progress("【无线检测】SLE星闪扫描")
+        msg = SleDiscoverMessage(self.config.device_psk, self.config.discover_duration)
+        timeout = self.config.discover_duration / 1000 + self.config.test_timeout
+        response = self._send_and_wait(msg, int(timeout))
+        if not response:
+            self.result.add_step("SLE扫描响应", False, "超时")
+            return False
+        device_count = response.get('body', {}).get('device_count', 0)
+        min_count = self.config.sle_min_count
+        passed = device_count >= min_count
+        self.result.add_step("SLE扫描结果", passed,
+                             f"发现{device_count}个设备，最小要求{min_count}，{'通过' if passed else '未发现设备'}")
+        return passed
+
     def reset_config(self, progress_callback: Callable = None) -> tuple[bool, str]:
         try:
             if progress_callback:
                 progress_callback("发送重置NV配置指令...")
 
             reset_msg = ResetConfigMessage(self.config.device_psk)
-            if not self.mqtt_client.publish(reset_msg.to_json()):
-                error_msg = "发送重置配置指令失败"
-                logger.error(error_msg)
-                return False, error_msg
-
-            response = self._wait_for_response(self.config.test_timeout)
+            response = self._send_and_wait(reset_msg)
             if not response:
                 error_msg = "重置配置响应超时"
                 logger.error(error_msg)

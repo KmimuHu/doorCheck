@@ -29,22 +29,48 @@ class DeviceCard(QFrame):
         layout.setSpacing(4)
 
         sn_label = QLabel(f"SN: {self.device.get_display_name()}")
-        sn_label.setFont(QFont("Microsoft YaHei", 9))
+        sn_label.setFont(QFont("Microsoft YaHei", 8))
         sn_label.setWordWrap(True)
         sn_label.setStyleSheet("color: #333;")
         layout.addWidget(sn_label)
 
+        # 设备类型（新增）
+        type_label = QLabel(f"类型: {self.device.get_type_display()}")
+        type_label.setFont(QFont("Microsoft YaHei", 8, QFont.Bold))
+        type_label.setWordWrap(True)
+        type_label.setStyleSheet("color: #2196F3;")
+        layout.addWidget(type_label)
+
         ip_label = QLabel(f"IP: {self.device.ip}")
-        ip_label.setFont(QFont("Microsoft YaHei", 9))
+        ip_label.setFont(QFont("Microsoft YaHei", 8))
         ip_label.setWordWrap(True)
         ip_label.setStyleSheet("color: #333;")
         layout.addWidget(ip_label)
 
         model_label = QLabel(f"型号: {self.device.model}")
-        model_label.setFont(QFont("Microsoft YaHei", 9))
+        model_label.setFont(QFont("Microsoft YaHei", 8))
         model_label.setWordWrap(True)
         model_label.setStyleSheet("color: #333;")
         layout.addWidget(model_label)
+
+        # 硬件版本和固件版本
+        version_text = []
+        if self.device.hw_ver:
+            version_text.append(f"硬件版本: {self.device.hw_ver}")
+        if self.device.fw_ver:
+            version_text.append(f"固件版本: {self.device.fw_ver}")
+
+        if version_text:
+            version_label = QLabel(" | ".join(version_text))
+            version_label.setFont(QFont("Microsoft YaHei", 8))
+            version_label.setWordWrap(True)
+            version_label.setStyleSheet("color: #333333;")
+            layout.addWidget(version_label)
+
+        self.mqtt_label = QLabel("MQTT: 未连接")
+        self.mqtt_label.setFont(QFont("Microsoft YaHei", 8))
+        self.mqtt_label.setStyleSheet("color: #999;")
+        layout.addWidget(self.mqtt_label)
 
         status_layout = QHBoxLayout()
         self.status_label = QLabel("状态: 未测试")
@@ -102,6 +128,15 @@ class DeviceCard(QFrame):
         else:
             self.status_label.setStyleSheet("color: #666;")
 
+    def update_mqtt_status(self, connected: bool, mqtt_ip: str = None):
+        if connected:
+            ip_text = f" ({mqtt_ip})" if mqtt_ip else ""
+            self.mqtt_label.setText(f"MQTT: 已连接{ip_text}")
+            self.mqtt_label.setStyleSheet("color: #4caf50; font-weight: bold;")
+        else:
+            self.mqtt_label.setText("MQTT: 未连接")
+            self.mqtt_label.setStyleSheet("color: #999;")
+
     def mousePressEvent(self, event):
         self.clicked.emit(self.device.sn)
         super().mousePressEvent(event)
@@ -146,6 +181,26 @@ class DeviceListPanel(QWidget):
             }
         """)
         button_layout.addWidget(self.refresh_btn)
+
+        self.scan_btn = QPushButton("网络扫描")
+        self.scan_btn.setStyleSheet("""
+            QPushButton {
+                background-color: #2196F3;
+                color: white;
+                border: none;
+                padding: 8px 16px;
+                border-radius: 4px;
+                font-family: 'Microsoft YaHei';
+                font-size: 12px;
+            }
+            QPushButton:hover {
+                background-color: #1976D2;
+            }
+            QPushButton:disabled {
+                background-color: #90CAF9;
+            }
+        """)
+        button_layout.addWidget(self.scan_btn)
 
         layout.addLayout(button_layout)
 
@@ -201,6 +256,10 @@ class DeviceListPanel(QWidget):
     def update_device_status(self, sn: str, status: str):
         if sn in self.device_cards:
             self.device_cards[sn].update_status(status)
+
+    def update_device_mqtt_status(self, sn: str, connected: bool, mqtt_ip: str = None):
+        if sn in self.device_cards:
+            self.device_cards[sn].update_mqtt_status(connected, mqtt_ip)
 
     def clear_devices(self):
         for card in list(self.device_cards.values()):

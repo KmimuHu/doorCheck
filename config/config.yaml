@@ -1,67 +1,81 @@
 app:
-  name: "智能门锁产测工具"
-  version: "2.5"
-
+  name: 智能设备产测工具
+  version: '2.6'
 device:
-  psk: "weidian_24h"
-  product_id: "1696"
-  timeout: 10
   heartbeat_interval: 30
-
-mqtt:
-  broker: "127.0.0.1"
-  port: 1881
-  keepalive: 60
-  qos: 1
-  allow_anonymous: true
-  use_identity_as_username: false
-  require_certificate: false
-
+  product_id: '1696'
+  psk: weidian_24h
+  timeout: 10
 mdns:
-  service_type: "_mqtt._tcp.local."
+  service_type: _mqtt._tcp.local.
   timeout: 5
-
-test:
-  open_duration: 5000
-  test_timeout: 30
-  retry_count: 3
-  verify_state: true
-
+mqtt:
+  allow_anonymous: true
+  broker: 22.0.0.1
+  broker_mode: local
+  keepalive: 60
+  port: 1881
+  qos: 1
+  require_certificate: false
+  use_identity_as_username: false
 printer:
-  enabled: true
-  paper_width: 50
-  paper_height: 30
   dpi: 600
-  label_config:
-    labelWidth: 1181
-    labelHeight: 708
-    drawBorder: true
-    printBarcode: false
-    dateFormat: "yyyy/MM/dd"
-    snTextConfig:
-      x: 115
-      y: 503
-      width: 541
-      height: 67
-      fontSize: 34
-      fontFamily: "方正兰亭圆简体"
-      fontBold: true
-      alignment: "left"
-    dateConfig:
-      x: 371
-      y: 344
-      width: 283
-      height: 64
-      fontSize: 32
-      fontFamily: "方正兰亭圆简体"
-      fontBold: true
-      alignment: "left"
-    qrCodeConfig:
-      x: 740
-      y: 181
-      width: 441
-      height: 441
-      fontSize: 16
-      fontFamily: "方正兰亭圆简体"
-      fontBold: false
-      alignment: "left"
+  enabled: true
+  paper_height: 30
+  paper_width: 50
+  printer_name: Xprinter XP-T271U
+  protocol: auto
+  tspl_layout:
+    border:
+      thickness: 2
+      x1: 2
+      x2: 398
+      y1: 2
+      y2: 238
+    date:
+      font: '1'
+      rotation: 0
+      x: 120
+      x_scale: 1
+      y: 124
+      y_scale: 1
+    qrcode:
+      cell_width: 6
+      x: 245
+      y: 69
+    sn:
+      font: '1'
+      rotation: 0
+      x: 34
+      x_scale: 1
+      y: 178
+      y_scale: 1
+  zpl_layout:
+    date:
+      font_height: 80
+      font_width: 80
+      x: 354
+      y: 366
+    qrcode:
+      magnification: 15
+      x: 723
+      y: 204
+    sn:
+      font_height: 80
+      font_width: 80
+      x: 100
+      y: 605
+test:
+  ble_rssi_threshold: -70
+  discover_duration: 5000
+  ir_strict_verify: true
+  open_duration: 5000
+  retry_count: 3
+  sle_min_count: 1
+  test_timeout: 30
+  verify_state: true
+  wifi_rssi_threshold: -40
+ui:
+  layout_mode: 4
+  remember_layout: false
+  speaker_type: outdoor

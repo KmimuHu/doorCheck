@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-门锁产测工具打包脚本
+智能设备产测工具打包脚本
 支持 Windows、macOS、Linux 跨平台打包
 """
 
@@ -19,7 +19,7 @@ class BuildScript:
         self.project_root = Path(__file__).parent.absolute()
         self.dist_dir = self.project_root / "dist"
         self.build_dir = self.project_root / "build"
-        self.app_name = "门锁产测工具"
+        self.app_name = "智能设备产测工具"
 
         # 定义需要检查的依赖
         self.required_modules = [
@@ -375,11 +375,8 @@ class BuildScript:
         # 显示结果
         success = self.show_results()
 
-        # 询问是否清理构建文件
-        print()
-        response = input("是否清理构建文件? (Y/n): ")
-        if response.lower() != 'n':
-            self.clean_build_files()
+        # 清理构建文件
+        self.clean_build_files()
 
         return success
 

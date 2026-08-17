@@ -113,6 +113,7 @@ class DeviceDetailPanel(QWidget):
     ota_clicked = pyqtSignal(str)              # device_sn
     print_label_clicked = pyqtSignal(str)      # device_sn
     reset_config_clicked = pyqtSignal(str)     # device_sn
+    view_records_clicked = pyqtSignal(str)     # device_sn
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -202,6 +203,9 @@ class DeviceDetailPanel(QWidget):
         self.test_widgets = {}
         test_items = [
             ("burn_mac", "烧写MAC", "#16a085", "#138d75"),
+            ("wifi_discover", "WiFi检测", "#2980b9", "#2471a3"),
+            ("ble_discover", "BLE检测", "#1abc9c", "#17a589"),
+            ("sle_discover", "SLE检测", "#8e44ad", "#7d3c98"),
             ("remote_pairing", "遥控器配对", "#9b59b6", "#8e44ad"),
             ("emergency_switch", "应急开关", "#e74c3c", "#c0392b"),
         ]
@@ -352,6 +356,24 @@ class DeviceDetailPanel(QWidget):
         self.reset_btn.setEnabled(False)
         button_layout.addWidget(self.reset_btn)
 
+        self.view_records_btn = QPushButton("测试记录")
+        self.view_records_btn.setStyleSheet("""
+            QPushButton {
+                background-color: #2196F3;
+                color: white;
+                border: none;
+                padding: 10px 20px;
+                border-radius: 4px;
+                font-family: 'Microsoft YaHei';
+                font-size: 12px;
+            }
+            QPushButton:hover {
+                background-color: #1976D2;
+            }
+        """)
+        self.view_records_btn.clicked.connect(self._on_view_records)
+        button_layout.addWidget(self.view_records_btn)
+
         button_layout.addStretch()
         content_layout.addLayout(button_layout)
 
@@ -389,7 +411,7 @@ class DeviceDetailPanel(QWidget):
 
     def set_device(self, sn: str, ip: str, model: str):
         self.current_device_sn = sn
-        self.device_info_label.setText(f"SN: {sn}\nIP: {ip}\n型号: {model}")
+        self.device_info_label.setText(f"SN: {sn}  IP: {ip}  型号: {model}")
         self.auto_test_btn.setEnabled(True)
         self.ota_btn.setEnabled(True)
         self.print_btn.setEnabled(True)
@@ -480,3 +502,6 @@ class DeviceDetailPanel(QWidget):
     def _on_reset_config(self):
         if self.current_device_sn:
             self.reset_config_clicked.emit(self.current_device_sn)
+
+    def _on_view_records(self):
+        self.view_records_clicked.emit(self.current_device_sn or '')
