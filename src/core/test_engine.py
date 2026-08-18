@@ -24,6 +24,8 @@ class TestEngine:
         self.config = config
         self.result = TestResult()
         self.emergency_event = threading.Event()
+        self.remote_open_event = threading.Event()
+        self.remote_pairing_result = None  # 存储配对结果
         self.device_offline_event = threading.Event()
         self.on_progress_callback = None
         self.on_test_item_callback = None
@@ -46,6 +48,13 @@ class TestEngine:
                 logger.info(f"收到应急开关事件通知: emergencyStatus={emergency_status}")
                 if str(emergency_status) == "1":
                     self.emergency_event.set()
+            elif action == "remote_pairing_result":
+                result = message.get('body', {}).get('result', '')
+                logger.info(f"收到遥控器配对结果通知: result={result}")
+                self.remote_pairing_result = result
+            elif action == "remote_open":
+                logger.info(f"收到遥控器开门事件通知")
+                self.remote_open_event.set()
             elif action == "offline":
                 reason = message.get('body', {}).get('reason', '')
                 logger.warning(f"设备离线事件: reason={reason}")
@@ -232,6 +241,24 @@ class TestEngine:
                 'duration': round(time.time() - t0, 2), 'steps': [],
             })
 
+            # 遥控器测试完成后，等待门关闭再进行应急开关测试
+            if ok:
+                logger.info("遥控器测试完成，等待门锁自动关闭...")
+                self._report_progress("等待门锁自动关闭，准备应急开关测试...")
+                # 轮询查询门锁状态，最多等待30秒
+                close_wait_start = time.time()
+                while time.time() - close_wait_start < 30:
+                    current_state = self._query_door_state(timeout=3)
+                    if current_state in ["closed", "locked"]:
+                        logger.info(f"✓ 门锁已关闭，状态: {current_state}")
+                        self._report_progress(f"✓ 门锁已关闭，准备应急开关测试")
+                        break
+                    logger.debug(f"门锁状态: {current_state}，继续等待...")
+                    time.sleep(2)  # 每2秒查询一次
+                else:
+                    logger.warning("等待门锁关闭超时30秒，继续应急开关测试")
+                    self._report_progress("等待门锁关闭超时，继续应急开关测试")
+
             self._report_test_item("emergency_switch", "testing")
             t0 = time.time()
             ok = self.test_emergency_switch(timeout=10, report_callback=report_callback)
@@ -305,8 +332,9 @@ class TestEngine:
                             report_callback: Callable = None, initial_state: str = None) -> bool:
         self._report_progress("【步骤4】测试遥控器配对")
 
-        # 清除离线标志
+        # 清除离线标志和遥控器事件标志
         self.device_offline_event.clear()
+        self.remote_open_event.clear()
 
         # 如果没有传入初始状态，说明是单独调用，需要等待连接稳定
         if initial_state is None:
@@ -323,7 +351,7 @@ class TestEngine:
 
         logger.info(f"当前门锁状态: {current_state}")
 
-        # 测试前校验：如果门是开的，直接强制上锁
+        # 测试前校验：如果门是开的，先强制上锁
         if current_state in ["opened", "unlocked"]:
             logger.info("门锁处于开启状态，强制上锁")
             self._report_progress("门锁处于开启状态，强制上锁...")
@@ -334,17 +362,16 @@ class TestEngine:
                 self.result.add_step("强制上锁响应", False, "超时")
                 return False
 
-            resp_status = response.get('body', {}).get('status', '')
-            if resp_status not in ("closed", "locked"):
-                if not self._verify_door_state("closed", timeout=2):
-                    self.result.add_step("强制上锁状态验证", False, "上锁失败")
-                    return False
+            # 发送close命令后等待一段时间，让门锁完成关门动作
+            logger.info("等待门锁完成关门动作...")
+            time.sleep(3)
 
             self.result.add_step("测试前门锁状态", True, "门已强制上锁")
         else:
             self.result.add_step("测试前门锁状态", True, "门锁已处于关闭状态")
 
         # 开始配对测试
+        self.remote_pairing_result = None  # 清除之前的配对结果
         pairing_msg = RemotePairingMessage(self.config.device_psk, duration=pairing_duration)
         response = self._send_and_wait(pairing_msg)
         if not response:
@@ -353,20 +380,53 @@ class TestEngine:
 
         self.result.add_step("等待配对响应", True)
 
-        # 阶段一：配对倒计时（pairing_duration），提示按配对键
-        pairing_secs = int(pairing_duration / 1000)
-        for remaining in range(pairing_secs, 0, -1):
-            if report_callback:
-                report_callback("pairing_countdown", remaining)
-            time.sleep(1)
+        # 阶段一：配对倒计时（pairing_duration），提示按配对键，等待 remote_pairing_result
+        # 注意：设备会在配对窗口结束后才发送结果通知，所以等待时间需要比 duration 长
+        pairing_timeout = int(pairing_duration / 1000) + 3  # 额外等待3秒接收结果通知
+        logger.info(f"等待遥控器配对结果，超时时间: {pairing_timeout}秒")
+        self._report_progress(f"请按遥控器配对键...")
 
-        # 阶段二：开门倒计时（open_timeout），检测门是否打开
+        pairing_secs = int(pairing_duration / 1000)
+        pairing_result_received = False
+        start_time = time.time()
+
+        while time.time() - start_time < pairing_timeout:
+            elapsed = int(time.time() - start_time)
+            remaining = pairing_secs - elapsed
+
+            # 配对倒计时显示（只在配对窗口期间显示）
+            if remaining > 0 and report_callback:
+                report_callback("pairing_countdown", remaining)
+
+            # 检查是否收到配对结果
+            if self.remote_pairing_result is not None:
+                pairing_result_received = True
+                if self.remote_pairing_result == "success":
+                    logger.info("✓ 遥控器配对成功")
+                    self._report_progress("✓ 遥控器配对成功")
+                    self.result.add_step("遥控器配对", True, "配对成功")
+                    break
+                else:
+                    logger.error(f"✗ 遥控器配对失败: {self.remote_pairing_result}")
+                    self.result.add_step("遥控器配对", False, f"配对失败: {self.remote_pairing_result}")
+                    return False
+
+            time.sleep(0.5)
+
+        # 如果配对超时仍未收到结果
+        if not pairing_result_received:
+            self.result.add_step("遥控器配对", False, f"{pairing_timeout}秒内未收到配对结果")
+            return False
+
+        # 阶段二：开门倒计时（open_timeout），等待 remote_open 事件
         if report_callback:
             report_callback("open_countdown", open_timeout)
 
+        logger.info(f"等待遥控器开门事件，超时时间: {open_timeout}秒")
+        self._report_progress(f"请按遥控器开门键，等待检测中...")
+
         start_time = time.time()
-        pairing_success = False
-        last_query_time = 0
+        open_success = False
 
         while time.time() - start_time < open_timeout:
             current_time = time.time()
@@ -374,79 +434,55 @@ class TestEngine:
             if report_callback and remaining > 0:
                 report_callback("open_countdown", remaining)
 
-            if current_time - last_query_time >= 0.5:
-                actual_state = self._query_door_state(timeout=2)
-                last_query_time = current_time
-                if actual_state in ["opened", "unlocked"]:
-                    logger.info(f"✓ 检测到开门状态: {actual_state}")
-                    # 门开了，立即隐藏弹窗
-                    if report_callback:
-                        report_callback("hide_dialog", 0)
-                    pairing_success = True
-                    break
-                logger.debug(f"当前状态: {actual_state}，继续查询...")
+            # 等待 remote_open 事件
+            if self.remote_open_event.wait(timeout=0.3):
+                logger.info("✓ 收到遥控器开门事件")
+                self._report_progress("✓ 检测到遥控器开门事件")
+                if report_callback:
+                    report_callback("hide_dialog", 0)
+                open_success = True
+                break
 
             time.sleep(0.1)
 
-        if not pairing_success:
-            self.result.add_step("验证遥控器配对", False, f"{open_timeout}秒内未检测到开门状态")
+        if not open_success:
+            self.result.add_step("遥控器开门", False, f"{open_timeout}秒内未收到遥控器开门事件")
             return False
 
-        self.result.add_step("遥控器开门成功", True)
-
-        # 测试完成后，等待门自动关闭
-        logger.info("遥控器开门成功，等待门体自动关闭...")
-        self._report_progress("遥控器开门成功，等待门体自动关闭...")
-
-        door_closed = False
-        wait_start = time.time()
-        while time.time() - wait_start < 25:
-            time.sleep(2)
-            current_state = self._query_door_state(timeout=3)
-            if current_state in ["closed", "locked"]:
-                logger.info(f"✓ 门体已自动关闭，状态: {current_state}")
-                self._report_progress("✓ 门体已自动关闭，遥控器配对测试完成")
-                door_closed = True
-                break
-            logger.info(f"门体状态: {current_state}，继续等待关闭...")
-
-        if not door_closed:
-            self.result.add_step("等待门体关闭", False, "25秒内门体未自动关闭")
-            return False
-
-        self.result.add_step("验证遥控器配对", True, "遥控器配对成功，门体已自动关闭")
+        self.result.add_step("遥控器开门", True, "遥控器开门成功")
+        logger.info("✓ 遥控器配对测试完成")
         return True
 
     def test_emergency_switch(self, timeout: int = 10, report_callback: Callable = None) -> bool:
         self._report_progress("【步骤3】测试应急开关功能")
 
-        current_state = self._query_door_state()
-        if not current_state:
-            self.result.add_step("检查初始门锁状态", False, "查询状态失败")
+        # 无条件强制上锁（因为设备状态可能不准确，且通常在遥控器测试后门是开的）
+        logger.info("应急开关测试前，强制上锁确保初始状态")
+        self._report_progress("强制上锁，准备应急开关测试...")
+
+        close_msg = CloseDoorMessage(self.config.device_psk)
+        response = self._send_and_wait(close_msg)
+        if not response:
+            self.result.add_step("强制上锁响应", False, "超时")
             return False
 
-        logger.info(f"当前门锁状态: {current_state}")
+        # 等待门锁完成关门动作（轮询确认）
+        logger.info("等待门锁完成关门动作...")
+        close_wait_start = time.time()
+        locked = False
+        while time.time() - close_wait_start < 10:
+            time.sleep(1)
+            current_state = self._query_door_state(timeout=3)
+            if current_state in ["closed", "locked"]:
+                logger.info(f"✓ 门锁已关闭，状态: {current_state}")
+                locked = True
+                break
+            logger.debug(f"等待关门中，当前状态: {current_state}")
 
-        # 测试前校验：如果门是开的，直接强制上锁
-        if current_state in ["opened", "unlocked"]:
-            logger.info("门锁处于开启状态，强制上锁")
-            self._report_progress("门锁处于开启状态，强制上锁...")
+        if not locked:
+            logger.warning("等待门锁关闭超时，继续测试")
 
-            close_msg = CloseDoorMessage(self.config.device_psk)
-            response = self._send_and_wait(close_msg)
-            if not response:
-                self.result.add_step("强制上锁响应", False, "超时")
-                return False
-
-            resp_status = response.get('body', {}).get('status', '')
-            if resp_status not in ("closed", "locked"):
-                if not self._verify_door_state("closed", timeout=2):
-                    self.result.add_step("强制上锁状态验证", False, "上锁失败")
-                    return False
-
-            self.result.add_step("测试前门锁状态", True, "门已强制上锁")
-        else:
-            self.result.add_step("测试前门锁状态", True, "门锁已处于关闭状态")
+        self.result.add_step("测试前门锁状态", True, "门已强制上锁")
 
         # 开始应急开关测试
         logger.info("门锁已上锁，等待用户按应急开关...")

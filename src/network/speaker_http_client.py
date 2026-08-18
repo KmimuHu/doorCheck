@@ -492,9 +492,6 @@ class SpeakerHTTPClient:
     def get_factory_mode(self) -> Optional[Dict]:
         return self._get("/api/env/get_factory")
     
-    def play_audio(self, filename: str = "/oem/audio/audio_chn0.g711a") -> Optional[Dict]:
-        return self._get("/api/audio/play", {"filename": filename})
-    
     def stop_audio(self) -> Optional[Dict]:
         return self._get("/api/audio/stop")
     

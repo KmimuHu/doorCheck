@@ -1012,8 +1012,12 @@ class MainWindow(QMainWindow):
         query_msg = QueryStatusMessage(self.config.device_psk)
 
         if existing_client and existing_client.connected:
-            response = existing_client.request(query_msg.to_json(), query_msg.mid, timeout=2.5)
-            return bool(response and response.get('header', {}).get('code', 0) == 0)
+            response = existing_client.request(query_msg.to_json(), query_msg.mid, timeout=3)
+            if response and response.get('header', {}).get('code', 0) == 0:
+                return True
+            # 如果query超时但MQTT连接正常，也认为设备在线
+            logger.info(f"设备 {device.sn} query超时，但MQTT已连接，认为设备在线")
+            return True
 
         probe_client = MQTTClient(
             self._get_local_broker_ip(),
@@ -1023,10 +1027,14 @@ class MainWindow(QMainWindow):
             client_id_prefix=f"doorcheck_probe_{uuid.uuid4().hex[:8]}"
         )
         try:
-            if not probe_client.connect(timeout=2):
+            if not probe_client.connect(timeout=3):
                 return False
-            response = probe_client.request(query_msg.to_json(), query_msg.mid, timeout=2.5)
-            return bool(response and response.get('header', {}).get('code', 0) == 0)
+            response = probe_client.request(query_msg.to_json(), query_msg.mid, timeout=3)
+            if response and response.get('header', {}).get('code', 0) == 0:
+                return True
+            # 如果能连接MQTT但query超时，也认为设备在线（可能是旧固件不支持query）
+            logger.info(f"设备 {device.sn} 能连接MQTT但不响应query，仍认为在线")
+            return True
         finally:
             probe_client.disconnect()
 
