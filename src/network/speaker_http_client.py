@@ -70,6 +70,8 @@ class SpeakerHTTPClient:
             logger.debug(f"GET请求: {url}, params={params}")
             
             actual_timeout = timeout if timeout is not None else self.default_timeout
+            prepared_request = requests.Request("GET", url, params=params).prepare()
+            digest_uri = prepared_request.path_url
             response = requests.get(url, params=params, timeout=actual_timeout)
             
             if response.status_code == 401:
@@ -78,8 +80,8 @@ class SpeakerHTTPClient:
                 
                 if 'Digest' in www_auth:
                     auth_params = self._parse_www_authenticate(www_auth)
-                    auth_header = self._generate_digest_auth('GET', endpoint, auth_params)
-                    logger.debug(f"使用Digest认证重试: {endpoint}")
+                    auth_header = self._generate_digest_auth('GET', digest_uri, auth_params)
+                    logger.debug(f"使用Digest认证重试: {digest_uri}")
                     logger.debug(f"Authorization: ***")
                     
                     headers = {'Authorization': auth_header}
