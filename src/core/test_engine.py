@@ -31,6 +31,10 @@ class TestEngine:
         self.on_test_item_callback = None
         self.device_hw_ver = device_hw_ver or ""
 
+        # 硬件状态监控
+        self.hardware_status_mismatch = False  # 硬件状态不一致标志
+        self.last_hardware_check_time = 0  # 最后一次检查时间
+
         self.mqtt_client.register_callback("test_engine", self._on_message_received)
 
     def _on_message_received(self, topic: str, message: Dict):
@@ -59,6 +63,46 @@ class TestEngine:
                 reason = message.get('body', {}).get('reason', '')
                 logger.warning(f"设备离线事件: reason={reason}")
                 self.device_offline_event.set()
+
+        # 监听设备日志消息，检测硬件状态不一致
+        elif "log" in topic:
+            self._check_device_logs(message)
+
+    def _check_device_logs(self, message: Dict):
+        """检查设备日志中是否有硬件状态不一致的警告"""
+        body = message.get('body', {})
+        logs = body.get('logs', [])
+
+        for log_entry in logs:
+            log_message = log_entry.get('message', '')
+            log_level = log_entry.get('level', '')
+
+            # 检测 "Door status mismatch" 警告
+            if 'Door status mismatch' in log_message or 'door status mismatch' in log_message.lower():
+                logger.warning(f"⚠️ 检测到硬件状态不一致: {log_message}")
+                self.hardware_status_mismatch = True
+                self.last_hardware_check_time = time.time()
+
+    def _verify_hardware_status(self) -> bool:
+        """
+        验证硬件状态是否正常
+
+        Returns:
+            True: 硬件状态正常
+            False: 硬件状态异常（检测到状态不一致）
+        """
+        # 清除旧的硬件状态标志（只检查最近5秒内的日志）
+        current_time = time.time()
+        if self.last_hardware_check_time > 0 and (current_time - self.last_hardware_check_time) > 5:
+            # 5秒前的警告可以忽略
+            self.hardware_status_mismatch = False
+
+        if self.hardware_status_mismatch:
+            logger.error("❌ 硬件状态异常：检测到门锁状态不一致（isr!=hw），请检查电机或电磁锁硬件")
+            return False
+
+        logger.info("✓ 硬件状态正常")
+        return True
 
     def close(self):
         """释放测试引擎注册的MQTT回调，避免后续测试被旧回调干扰。"""
@@ -369,6 +413,23 @@ class TestEngine:
             self.result.add_step("测试前门锁状态", True, "门已强制上锁")
         else:
             self.result.add_step("测试前门锁状态", True, "门锁已处于关闭状态")
+
+        # 【新增】硬件状态检查：验证门锁硬件是否真正锁上
+        logger.info("检查硬件状态...")
+        self._report_progress("检查硬件状态...")
+
+        # 清除旧的硬件状态标志，重新检测
+        self.hardware_status_mismatch = False
+
+        # 等待1秒，让设备日志推送到来
+        time.sleep(1)
+
+        # 验证硬件状态
+        if not self._verify_hardware_status():
+            self.result.add_step("硬件状态检查", False, "门锁状态不一致，硬件未真正锁定")
+            return False
+
+        self.result.add_step("硬件状态检查", True, "硬件状态正常")
 
         # 开始配对测试
         self.remote_pairing_result = None  # 清除之前的配对结果
