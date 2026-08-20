@@ -68,31 +68,42 @@ class SpeakerHTTPClient:
         try:
             url = f"{self.base_url}{endpoint}"
             logger.debug(f"GET请求: {url}, params={params}")
-            
+
             actual_timeout = timeout if timeout is not None else self.default_timeout
             prepared_request = requests.Request("GET", url, params=params).prepare()
             digest_uri = prepared_request.path_url
             response = requests.get(url, params=params, timeout=actual_timeout)
-            
+
             if response.status_code == 401:
                 www_auth = response.headers.get('WWW-Authenticate', '')
                 logger.debug(f"收到401，WWW-Authenticate: {www_auth}")
-                
+
                 if 'Digest' in www_auth:
                     auth_params = self._parse_www_authenticate(www_auth)
+                    # 兼容本地和远程broker：优先尝试带查询参数的URI（本地broker）
                     auth_header = self._generate_digest_auth('GET', digest_uri, auth_params)
-                    logger.debug(f"使用Digest认证重试: {digest_uri}")
+                    logger.debug(f"使用Digest认证重试(带参数): {digest_uri}")
                     logger.debug(f"Authorization: ***")
-                    
+
                     headers = {'Authorization': auth_header}
                     response = requests.get(url, params=params, headers=headers, timeout=actual_timeout)
+
+                    # 如果仍然401，尝试不带查询参数的URI（远程broker）
+                    if response.status_code == 401 and params:
+                        logger.debug(f"带参数认证失败，尝试不带参数的URI（远程broker兼容）")
+                        auth_params = self._parse_www_authenticate(response.headers.get('WWW-Authenticate', www_auth))
+                        auth_header = self._generate_digest_auth('GET', endpoint, auth_params)
+                        logger.debug(f"使用Digest认证重试(不带参数): {endpoint}")
+
+                        headers = {'Authorization': auth_header}
+                        response = requests.get(url, params=params, headers=headers, timeout=actual_timeout)
                 elif 'Basic' in www_auth:
                     logger.debug(f"使用Basic认证重试: {endpoint}")
                     response = requests.get(url, params=params, auth=self.basic_auth, timeout=actual_timeout)
                 else:
                     logger.error(f"不支持的认证类型: {www_auth}")
                     return None
-                
+
                 if response.status_code == 401:
                     try:
                         error_body = response.json()
