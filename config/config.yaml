@@ -54,18 +54,18 @@ printer:
     render_mode: bitmap        # bitmap(位图渲染,字体可控) | native(打印机内置字体)
     font_path: assets/fonts/label.ttf   # 位图渲染使用的字体文件(相对工程根目录或绝对路径)
     date:
-      font_size: 40
-      x: 300
-      y: 388
+      font_size: 44
+      x: 370
+      y: 405
     qrcode:
       error_correction: M
-      box_size: 13            # 每个二维码模块的点数(越大二维码越大)
-      x: 770
+      box_size: 14            # 每个二维码模块的点数(越大二维码越大)
+      x: 815
       y: 300
     sn:
-      font_size: 40
-      x: 77
-      y: 512
+      font_size: 44
+      x: 136
+      y: 545
 test:
   ble_rssi_threshold: -70
   discover_duration: 5000
