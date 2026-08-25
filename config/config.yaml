@@ -1,6 +1,6 @@
 app:
   name: 智能设备产测工具
-  version: '2.8'
+  version: '2.9'
 device:
   heartbeat_interval: 30
   product_id: '1696'
@@ -51,20 +51,21 @@ printer:
       y: 178
       y_scale: 1
   zpl_layout:
+    render_mode: bitmap        # bitmap(位图渲染,字体可控) | native(打印机内置字体)
+    font_path: assets/fonts/label.ttf   # 位图渲染使用的字体文件(相对工程根目录或绝对路径)
     date:
-      font_height: 80
-      font_width: 80
-      x: 354
-      y: 366
+      font_size: 40
+      x: 300
+      y: 388
     qrcode:
-      magnification: 15
-      x: 723
-      y: 204
+      error_correction: M
+      box_size: 13            # 每个二维码模块的点数(越大二维码越大)
+      x: 770
+      y: 300
     sn:
-      font_height: 80
-      font_width: 80
-      x: 100
-      y: 605
+      font_size: 40
+      x: 77
+      y: 512
 test:
   ble_rssi_threshold: -70
   discover_duration: 5000

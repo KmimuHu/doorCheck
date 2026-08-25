@@ -1,3 +1,4 @@
+import os
 import sys
 import logging
 from datetime import datetime
@@ -170,16 +171,45 @@ class UniversalPrinter:
         return tspl
 
     def _build_zpl_commands(self, sn: str, capacity: str = '') -> str:
-        """构建 ZPL 打印指令"""
+        """构建 ZPL 打印指令
+
+        支持两种渲染模式（由 zpl_layout.render_mode 决定）：
+        - bitmap: 用 PIL 在电脑端渲染日期/SN(指定字体)和二维码为位图，
+                  转 ^GFA 发送。字体和二维码完全可控，不受打印机内置字体限制。
+        - native: 使用打印机内置字体(^A/^BQN)，兼容旧行为。
+        """
+        render_mode = self.zpl_layout.get('render_mode', 'native')
+        if render_mode == 'bitmap':
+            return self._build_zpl_bitmap(sn, capacity)
+        return self._build_zpl_native(sn, capacity)
+
+    def _build_zpl_native(self, sn: str, capacity: str = '') -> str:
+        """构建 ZPL 打印指令（打印机内置字体模式）"""
+        label_w = int(self.paper_width * self.dpi / 25.4)
+        label_h = int(self.paper_height * self.dpi / 25.4)
+
         zpl = "^XA\n"  # 标签开始
-        zpl += "^PW" + str(int(self.paper_width * self.dpi / 25.4)) + "\n"  # 标签宽度（点数）
-        zpl += "^LL" + str(int(self.paper_height * self.dpi / 25.4)) + "\n"  # 标签长度（点数）
+        zpl += f"^PW{label_w}\n"  # 标签宽度（点数）
+        zpl += f"^LL{label_h}\n"  # 标签长度（点数）
+
+        # 边框（与 TSPL 模板保持一致，绘制外框）
+        border_cfg = self.zpl_layout.get('border', {})
+        if border_cfg.get('enabled', False):
+            b_thickness = border_cfg.get('thickness', 6)
+            b_x = border_cfg.get('x', 6)
+            b_y = border_cfg.get('y', 6)
+            b_w = border_cfg.get('width', label_w - b_x * 2)
+            b_h = border_cfg.get('height', label_h - b_y * 2)
+            zpl += f"^FO{b_x},{b_y}\n"
+            zpl += f"^GB{b_w},{b_h},{b_thickness}^FS\n"
 
         # 从配置读取布局
         qr_cfg = self.zpl_layout.get('qrcode', {})
-        qr_x = qr_cfg.get('x', 723)
+        qr_x = qr_cfg.get('x', 724)
         qr_y = qr_cfg.get('y', 204)
-        
+        # 纠错等级（与 TSPL 模板的 M 级保持一致）
+        qr_ecc = qr_cfg.get('error_correction', 'M')
+
         # QR码放大倍数：目标15mm
         if 'magnification' in qr_cfg:
             qr_mag = qr_cfg['magnification']
@@ -190,30 +220,34 @@ class UniversalPrinter:
         date_cfg = self.zpl_layout.get('date', {})
         date_x = date_cfg.get('x', 354)
         date_y = date_cfg.get('y', 366)
-        date_font_h = date_cfg.get('font_height', 80)
-        date_font_w = date_cfg.get('font_width', 80)
+        date_font = date_cfg.get('font', 'D')
+        date_font_h = date_cfg.get('font_height', 35)
+        date_font_w = date_cfg.get('font_width', 24)
 
         sn_cfg = self.zpl_layout.get('sn', {})
         sn_x = sn_cfg.get('x', 100)
-        sn_y = sn_cfg.get('y', 605)
-        sn_font_h = sn_cfg.get('font_height', 80)
-        sn_font_w = sn_cfg.get('font_width', 80)
+        sn_y = sn_cfg.get('y', 526)
+        sn_font = sn_cfg.get('font', 'D')
+        sn_font_h = sn_cfg.get('font_height', 35)
+        sn_font_w = sn_cfg.get('font_width', 24)
 
         # 日期
+        # 使用 ^A<font> 指定内置点阵字体(A~H，非加粗)，避免 ^CF0 默认矢量字体
+        # (CG Triumvirate Bold Condensed) 带来的加粗效果
         date_str = datetime.now().strftime("%Y/%m/%d")
         zpl += f"^FO{date_x},{date_y}\n"
-        zpl += f"^CF0,{date_font_h},{date_font_w}\n"
+        zpl += f"^A{date_font}N,{date_font_h},{date_font_w}\n"
         zpl += f"^FD{date_str}^FS\n"
 
         # 序列号
         zpl += f"^FO{sn_x},{sn_y}\n"
-        zpl += f"^CF0,{sn_font_h},{sn_font_w}\n"
-        zpl += f"^FDSN:{sn}^FS\n"
+        zpl += f"^A{sn_font}N,{sn_font_h},{sn_font_w}\n"
+        zpl += f"^FDSN: {sn}^FS\n"
 
-        # QR码
+        # QR码（^FD 首字符为纠错等级，与 TSPL 模板保持一致）
         zpl += f"^FO{qr_x},{qr_y}\n"
         zpl += f"^BQN,2,{qr_mag}\n"
-        zpl += f"^FDQA,{sn}^FS\n"
+        zpl += f"^FD{qr_ecc}A,{sn}^FS\n"
 
         # 容量信息（如果提供且配置中有）
         if capacity:
@@ -228,6 +262,117 @@ class UniversalPrinter:
                 zpl += f"^FD{capacity}^FS\n"
 
         zpl += "^XZ\n"  # 标签结束
+        return zpl
+
+    def _resolve_font_path(self) -> Optional[str]:
+        """解析字体文件路径（支持相对工程根目录或绝对路径）"""
+        font_path = self.zpl_layout.get('font_path')
+        if not font_path:
+            return None
+        if os.path.isabs(font_path) and os.path.exists(font_path):
+            return font_path
+        # 相对路径：以工程根目录(本文件上溯三级)为基准
+        project_root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+        candidate = os.path.join(project_root, font_path)
+        if os.path.exists(candidate):
+            return candidate
+        logger.warning(f"字体文件未找到: {font_path} (已尝试 {candidate})")
+        return None
+
+    def _render_label_bitmap(self, sn: str):
+        """用 PIL 渲染整张标签的可变内容(日期/SN/二维码)为 1-bit 位图
+
+        返回 PIL Image(模式 '1')；坐标系与 ZPL 点坐标一致(600dpi)。
+        仅渲染可变字段，预印内容由标签纸自带。
+        """
+        from PIL import Image, ImageDraw, ImageFont
+        import qrcode
+
+        label_w = int(self.paper_width * self.dpi / 25.4)
+        label_h = int(self.paper_height * self.dpi / 25.4)
+
+        # 白底(1-bit: 255=白/不打印, 0=黑/打印)
+        img = Image.new('1', (label_w, label_h), 1)
+        draw = ImageDraw.Draw(img)
+
+        font_path = self._resolve_font_path()
+
+        def load_font(size):
+            if font_path:
+                try:
+                    return ImageFont.truetype(font_path, size)
+                except Exception as e:
+                    logger.error(f"加载字体失败({font_path}): {e}")
+            return ImageFont.load_default()
+
+        # 日期
+        date_cfg = self.zpl_layout.get('date', {})
+        date_str = datetime.now().strftime("%Y/%m/%d")
+        dfont = load_font(date_cfg.get('font_size', 40))
+        draw.text((date_cfg.get('x', 300), date_cfg.get('y', 388)),
+                  date_str, font=dfont, fill=0)
+
+        # SN
+        sn_cfg = self.zpl_layout.get('sn', {})
+        sfont = load_font(sn_cfg.get('font_size', 40))
+        draw.text((sn_cfg.get('x', 77), sn_cfg.get('y', 512)),
+                  f"SN: {sn}", font=sfont, fill=0)
+
+        # 二维码
+        qr_cfg = self.zpl_layout.get('qrcode', {})
+        ecc_map = {
+            'L': qrcode.constants.ERROR_CORRECT_L,
+            'M': qrcode.constants.ERROR_CORRECT_M,
+            'Q': qrcode.constants.ERROR_CORRECT_Q,
+            'H': qrcode.constants.ERROR_CORRECT_H,
+        }
+        qr = qrcode.QRCode(
+            error_correction=ecc_map.get(qr_cfg.get('error_correction', 'M'),
+                                         qrcode.constants.ERROR_CORRECT_M),
+            box_size=qr_cfg.get('box_size', 9),
+            border=0,
+        )
+        qr.add_data(sn)
+        qr.make(fit=True)
+        qr_img = qr.make_image(fill_color='black', back_color='white').convert('1')
+        img.paste(qr_img, (qr_cfg.get('x', 770), qr_cfg.get('y', 300)))
+
+        return img
+
+    @staticmethod
+    def _bitmap_to_gfa(img) -> str:
+        """把 1-bit PIL 位图转成 ZPL ^GFA 指令(ASCII hex)"""
+        width, height = img.size
+        bytes_per_row = (width + 7) // 8
+        total_bytes = bytes_per_row * height
+
+        # ZPL: 0 bit = 不打印, 1 bit = 打印(黑)。PIL '1' 模式 0=黑,需取反
+        pixels = img.load()
+        rows_hex = []
+        for y in range(height):
+            row = bytearray(bytes_per_row)
+            for x in range(width):
+                if pixels[x, y] == 0:  # 黑点 -> 需要打印
+                    row[x // 8] |= (0x80 >> (x % 8))
+            rows_hex.append(row.hex().upper())
+        data = ''.join(rows_hex)
+
+        return f"^GFA,{total_bytes},{total_bytes},{bytes_per_row},{data}"
+
+    def _build_zpl_bitmap(self, sn: str, capacity: str = '') -> str:
+        """构建 ZPL 打印指令（位图渲染模式）"""
+        label_w = int(self.paper_width * self.dpi / 25.4)
+        label_h = int(self.paper_height * self.dpi / 25.4)
+
+        img = self._render_label_bitmap(sn)
+        gfa = self._bitmap_to_gfa(img)
+
+        zpl = "^XA\n"
+        zpl += f"^PW{label_w}\n"
+        zpl += f"^LL{label_h}\n"
+        zpl += "^FO0,0\n"
+        zpl += gfa + "^FS\n"
+        zpl += "^XZ\n"
         return zpl
 
     def _print_tspl(self, sn: str, capacity: str = '') -> bool:

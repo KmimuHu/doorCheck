@@ -9,6 +9,7 @@ import os
 import platform
 import subprocess
 import shutil
+import yaml
 from pathlib import Path
 from typing import Optional, List, Tuple
 
@@ -20,6 +21,7 @@ class BuildScript:
         self.dist_dir = self.project_root / "dist"
         self.build_dir = self.project_root / "build"
         self.app_name = "智能设备产测工具"
+        self.version = self._load_version()
 
         # 定义需要检查的依赖
         self.required_modules = [
@@ -63,6 +65,18 @@ class BuildScript:
             "paho.mqtt",
             "amqtt",
         ]
+
+    def _load_version(self) -> str:
+        """从 config.yaml 读取版本号"""
+        config_file = self.project_root / "config" / "config.yaml"
+        try:
+            with open(config_file, 'r', encoding='utf-8') as f:
+                config = yaml.safe_load(f)
+                version = config.get('app', {}).get('version', '1.0')
+                return str(version)
+        except Exception as e:
+            print(f"警告: 无法读取版本号，使用默认版本 1.0: {e}")
+            return "1.0"
 
     def print_header(self, message: str):
         """打印标题"""
@@ -177,11 +191,14 @@ class BuildScript:
 
     def build_pyinstaller_command(self) -> List[str]:
         """构建 pyinstaller 命令"""
+        # 带版本号的文件名
+        app_name_with_version = f"{self.app_name}_{self.version}"
+
         cmd = [
             sys.executable, "-m", "PyInstaller",
             "--onefile",
             "--windowed",
-            "--name", self.app_name,
+            "--name", app_name_with_version,
         ]
 
         # 添加图标
@@ -193,6 +210,14 @@ class BuildScript:
                 cmd.extend(["--add-data", f"{icon_path};."])
             else:
                 cmd.extend(["--add-data", f"{icon_path}:."])
+
+        # 打包 assets 目录到程序内部
+        assets_path = self.project_root / "assets"
+        if assets_path.exists():
+            if self.system == "Windows":
+                cmd.extend(["--add-data", f"{assets_path};assets"])
+            else:
+                cmd.extend(["--add-data", f"{assets_path}:assets"])
 
         # 不再通过 --add-data 打包 certs/config，改为复制到 dist 目录
 
@@ -258,15 +283,17 @@ class BuildScript:
 
     def get_output_file(self) -> Optional[Path]:
         """获取输出文件路径"""
+        app_name_with_version = f"{self.app_name}_{self.version}"
+
         if self.system == "Windows":
-            return self.dist_dir / f"{self.app_name}.exe"
+            return self.dist_dir / f"{app_name_with_version}.exe"
         elif self.system == "Darwin":  # macOS
-            app_file = self.dist_dir / f"{self.app_name}.app"
+            app_file = self.dist_dir / f"{app_name_with_version}.app"
             if app_file.exists():
                 return app_file
-            return self.dist_dir / self.app_name
+            return self.dist_dir / app_name_with_version
         else:  # Linux
-            return self.dist_dir / self.app_name
+            return self.dist_dir / app_name_with_version
 
     def show_results(self) -> bool:
         """显示打包结果"""
@@ -285,10 +312,12 @@ class BuildScript:
 
         print(f"可执行文件: {output_file}")
         print(f"文件大小: {size_mb:.2f} MB")
+        print(f"版本号: {self.version}")
         print()
 
         print("dist 目录内容:")
-        print(f"  OK {self.app_name}{'exe' if self.system == 'Windows' else ''}")
+        app_name_with_version = f"{self.app_name}_{self.version}"
+        print(f"  OK {app_name_with_version}{'.exe' if self.system == 'Windows' else ''}")
         for src, dst in self.external_dirs:
             dst_path = self.dist_dir / dst
             if dst_path.exists():
@@ -324,8 +353,9 @@ class BuildScript:
             self.project_root / "__pycache__",
         ]
 
+        app_name_with_version = f"{self.app_name}_{self.version}"
         files_to_clean = [
-            self.project_root / f"{self.app_name}.spec",
+            self.project_root / f"{app_name_with_version}.spec",
         ]
 
         for dir_path in dirs_to_clean:
