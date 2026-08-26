@@ -1644,7 +1644,6 @@ class MainWindow(QMainWindow):
                 self.zeroconf = None
 
             # 重新创建Zeroconf实例和ServiceBrowser
-            import time
             time.sleep(0.5)  # 短暂延迟确保端口释放
 
             self.zeroconf = Zeroconf()
