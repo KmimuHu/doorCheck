@@ -1012,13 +1012,15 @@ class MainWindow(QMainWindow):
         query_msg = QueryStatusMessage(self.config.device_psk)
 
         if existing_client and existing_client.connected:
-            response = existing_client.request(query_msg.to_json(), query_msg.mid, timeout=3)
+            response = existing_client.request(query_msg.to_json(), query_msg.mid, timeout=2)
             if response and response.get('header', {}).get('code', 0) == 0:
+                logger.debug(f"设备 {device.sn} 在线校验通过（已有MQTT连接）")
                 return True
             # 如果query超时但MQTT连接正常，也认为设备在线
-            logger.info(f"设备 {device.sn} query超时，但MQTT已连接，认为设备在线")
+            logger.debug(f"设备 {device.sn} query超时，但MQTT已连接，认为设备在线")
             return True
 
+        # 创建临时探测客户端，缩短超时时间以加快离线设备的检测
         probe_client = MQTTClient(
             self._get_local_broker_ip(),
             self.config.mqtt_port,
@@ -1027,14 +1029,23 @@ class MainWindow(QMainWindow):
             client_id_prefix=f"doorcheck_probe_{uuid.uuid4().hex[:8]}"
         )
         try:
-            if not probe_client.connect(timeout=3):
+            # 连接超时从3秒缩短到2秒
+            if not probe_client.connect(timeout=2):
+                logger.debug(f"设备 {device.sn} MQTT连接失败，判定为离线")
                 return False
-            response = probe_client.request(query_msg.to_json(), query_msg.mid, timeout=3)
+
+            # query超时从3秒缩短到2秒
+            response = probe_client.request(query_msg.to_json(), query_msg.mid, timeout=2)
             if response and response.get('header', {}).get('code', 0) == 0:
+                logger.debug(f"设备 {device.sn} 在线校验通过（query响应正常）")
                 return True
+
             # 如果能连接MQTT但query超时，也认为设备在线（可能是旧固件不支持query）
-            logger.info(f"设备 {device.sn} 能连接MQTT但不响应query，仍认为在线")
+            logger.debug(f"设备 {device.sn} 能连接MQTT但不响应query，仍认为在线")
             return True
+        except Exception as e:
+            logger.debug(f"设备 {device.sn} 在线校验异常: {e}")
+            return False
         finally:
             probe_client.disconnect()
 
@@ -1449,27 +1460,32 @@ class MainWindow(QMainWindow):
         thread.start()
 
     def _validate_device_online_worker(self, device_sn: str, generation: int):
-        max_attempts = 6
+        max_attempts = 3  # 减少重试次数，从6次改为3次
+        retry_delay = 1.5  # 减少重试延迟，从2秒改为1.5秒
         try:
             for attempt in range(max_attempts):
                 if generation != self.discovery_generation:
+                    logger.debug(f"设备 {device_sn} 校验已取消（generation变化）")
                     return
 
                 device = self.pending_discovered_devices.get(device_sn)
                 if not device:
+                    logger.debug(f"设备 {device_sn} 已从待校验列表移除")
                     return
 
+                logger.debug(f"设备 {device_sn} 在线校验 尝试 {attempt + 1}/{max_attempts}")
                 if self._validate_device_online(device):
                     if generation == self.discovery_generation:
+                        logger.info(f"设备 {device_sn} 在线校验通过")
                         self.device_validated_signal.emit(device)
                     return
 
                 if attempt < max_attempts - 1:
-                    time.sleep(2)
+                    time.sleep(retry_delay)
 
             device = self.pending_discovered_devices.get(device_sn)
             if device:
-                logger.info(f"忽略离线或缓存设备: {device.sn} ({device.ip})")
+                logger.info(f"忽略离线或缓存设备: {device.sn} ({device.ip}) - {max_attempts}次校验均失败")
         finally:
             with self.pending_device_validation_lock:
                 if generation == self.discovery_generation:
@@ -1604,21 +1620,53 @@ class MainWindow(QMainWindow):
 
         self._clear_discovered_devices()
 
-        # 重启ServiceBrowser以触发完整的网络扫描
+        # 完全重建Zeroconf实例以清除mDNS缓存
         try:
             if self.browser:
                 self.browser.cancel()
                 logger.info("已停止旧的ServiceBrowser")
 
             # 清除listener中的已发现设备记录
-            with self.listener._lock:
-                self.listener.discovered_devices.clear()
-                logger.info("已清除listener设备记录")
+            if self.listener:
+                with self.listener._lock:
+                    self.listener.discovered_devices.clear()
+                    logger.info("已清除listener设备记录")
 
+            # 关闭旧的Zeroconf实例（清除底层mDNS缓存）
+            if self.zeroconf:
+                # 注销master_mdns服务
+                if self.master_mdns:
+                    self.master_mdns.unregister()
+                    logger.info("已注销master mDNS服务")
+
+                self.zeroconf.close()
+                logger.info("已关闭旧的Zeroconf实例，清除mDNS缓存")
+                self.zeroconf = None
+
+            # 重新创建Zeroconf实例和ServiceBrowser
+            import time
+            time.sleep(0.5)  # 短暂延迟确保端口释放
+
+            self.zeroconf = Zeroconf()
+            logger.info("已创建新的Zeroconf实例")
+
+            # 重新注册master_mdns服务
+            self.master_mdns = MasterMdnsService(self.zeroconf, port=self.config.http_port)
+            self.master_mdns.register()
+            logger.info("已重新注册master mDNS服务")
+
+            # 创建新的listener（使用相同的回调）
+            self.listener = DeviceDiscoveryListener(
+                on_device_found=self.on_device_found,
+                on_device_removed=self.on_device_removed,
+                device_types=[DEVICE_TYPE_SMART_DOOR]
+            )
+
+            # 启动新的ServiceBrowser
             self.browser = ServiceBrowser(self.zeroconf, self.config.mdns_service_type, self.listener)
             logger.info("已启动新的ServiceBrowser，正在扫描网络...")
         except Exception as e:
-            logger.error(f"重启ServiceBrowser失败: {e}")
+            logger.error(f"重启设备发现失败: {e}")
 
         # 如果有已知设备，也通过MQTT发送discover命令
         if self.broadcast_mqtt_client and self.broadcast_mqtt_client.connected and len(self.devices) > 0:
