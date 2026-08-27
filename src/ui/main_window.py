@@ -902,6 +902,18 @@ class MainWindow(QMainWindow):
         if not device:
             return
 
+        # 检查所有测试项是否全部通过
+        all_passed = all(
+            widget.current_status == "passed"
+            for widget in self.device_detail_panel.test_widgets.values()
+        )
+        if not all_passed:
+            QMessageBox.warning(
+                self, '无法打印',
+                '只有全部测试项通过后才能打印标签。\n请先完成所有测试项。'
+            )
+            return
+
         self.device_detail_panel.append_log(f"打印标签: {sn}")
 
         upload_success = self._upload_test_data(sn)

@@ -28,6 +28,7 @@ class TestItemWidget(QWidget):
         self.display_name = display_name
         self.color = color
         self.hover_color = hover_color
+        self.current_status = "not_tested"  # 存储当前状态：passed/failed/testing/not_tested
         self.init_ui()
 
     def init_ui(self):
@@ -70,6 +71,7 @@ class TestItemWidget(QWidget):
         self.setLayout(layout)
 
     def update_result(self, status: str, message: str = ""):
+        self.current_status = status
         if status == "passed":
             self.status_label.setText("✅ 通过")
             self.status_label.setStyleSheet("font-family: 'Microsoft YaHei'; font-size: 13px; color: #4caf50; font-weight: bold;")
@@ -332,6 +334,10 @@ class DeviceDetailPanel(QWidget):
             QPushButton:hover {
                 background-color: #e68900;
             }
+            QPushButton:disabled {
+                background-color: #BDBDBD;
+                color: #757575;
+            }
         """)
         self.print_btn.clicked.connect(self._on_print_label)
         self.print_btn.setEnabled(False)
@@ -414,11 +420,11 @@ class DeviceDetailPanel(QWidget):
         self.device_info_label.setText(f"SN: {sn}  IP: {ip}  型号: {model}")
         self.auto_test_btn.setEnabled(True)
         self.ota_btn.setEnabled(True)
-        self.print_btn.setEnabled(True)
         self.reset_btn.setEnabled(True)
         for widget in self.test_widgets.values():
             widget.set_enabled(True)
         self.clear_results()
+        # 打印按钮由 _update_print_button_state 根据测试状态控制，不在此直接启用
 
     def clear_device(self):
         self.current_device_sn = None
@@ -448,6 +454,20 @@ class DeviceDetailPanel(QWidget):
     def update_test_result(self, test_name: str, status: str, message: str = ""):
         if test_name in self.test_widgets:
             self.test_widgets[test_name].update_result(status, message)
+        self._update_print_button_state()
+
+    def _update_print_button_state(self):
+        """根据测试状态更新打印按钮：只有全部测试通过才能打印。"""
+        if not self.current_device_sn:
+            self.print_btn.setEnabled(False)
+            return
+
+        # 检查所有测试项状态
+        all_passed = all(
+            widget.current_status == "passed"
+            for widget in self.test_widgets.values()
+        )
+        self.print_btn.setEnabled(all_passed)
 
     def update_auto_test_status(self, status: str):
         if status == "passed":
@@ -462,6 +482,8 @@ class DeviceDetailPanel(QWidget):
         else:
             self.auto_test_status.setText("")
             self.auto_test_status.setStyleSheet("font-family: 'Microsoft YaHei'; font-size: 13px;")
+        # 整机测试状态变更时也更新打印按钮（虽然各单项已更新过，但保险起见再检查一次）
+        self._update_print_button_state()
 
     def set_testing(self, is_testing: bool):
         self.auto_test_btn.setEnabled(not is_testing)
@@ -482,6 +504,7 @@ class DeviceDetailPanel(QWidget):
         self.auto_test_status.setStyleSheet("font-family: 'Microsoft YaHei'; font-size: 13px;")
         self.clear_log()
         self.hide_progress_bar()
+        self._update_print_button_state()  # 清除结果后打印按钮应禁用
 
     def _on_auto_test_clicked(self):
         if self.current_device_sn:
