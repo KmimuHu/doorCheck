@@ -1,6 +1,6 @@
 app:
   name: 智能设备产测工具
-  version: '2.10'
+  version: '2.11'
 device:
   heartbeat_interval: 30
   product_id: '1696'
@@ -53,6 +53,7 @@ printer:
   zpl_layout:
     render_mode: bitmap        # bitmap(位图渲染,字体可控) | native(打印机内置字体)
     font_path: assets/fonts/label.ttf   # 位图渲染使用的字体文件(相对工程根目录或绝对路径)
+    bold_width: 2              # 加粗描边宽度(点)，0=不加粗；各字段可用同名键单独覆盖
     date:
       font_size: 44
       x: 370

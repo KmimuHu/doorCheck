@@ -19,6 +19,16 @@ from ..utils.paths import get_app_dir
 
 
 class TestEngine:
+    # 遥控器配对的设备侧硬件时序（固件 1.1.4 实测，见设备日志）：
+    #   1. 收到 remote_pairing 后，设备保持 GPIO8 共 duration 毫秒（此阶段按键无效）
+    #   2. 之后才开启 GPIO3 采集窗口，固定 10 秒，与 duration 无关
+    #      设备日志原文: "GPIO3 requires 3 highs in 10000 ms"
+    #   3. 窗口结束（或按满次数）才发 remote_pairing_result 通知
+    # 因此结果通知最早在 duration + 10s 后到达，等待超时不能按 duration 推算。
+    PAIRING_KEY_WINDOW_SECS = 10   # 设备侧 GPIO3 采集窗口，固定值
+    PAIRING_REQUIRED_PRESSES = 3   # 窗口内需要的按键次数
+    PAIRING_RESULT_MARGIN_SECS = 5  # 通知传输 + 处理余量
+
     def __init__(self, mqtt_client: MQTTClient, config: Config, device_hw_ver: str = None):
         self.mqtt_client = mqtt_client
         self.config = config
@@ -268,41 +278,9 @@ class TestEngine:
                 return self.result
 
             # ── 阶段一：控制检测 ─────────────────────────────────────────
-            initial_state = self._query_door_state()
-            self._report_test_item("remote_pairing", "testing")
-            t0 = time.time()
-            ok = self.test_remote_pairing(pairing_duration=2000, open_timeout=10,
-                                          report_callback=report_callback,
-                                          initial_state=initial_state)
-            self._report_test_item("remote_pairing", "passed" if ok else "failed")
-            if report_callback:
-                report_callback("hide_dialog", 0)
-            if not ok:
-                failed_tests.append("遥控器配对测试")
-            self.result.sub_results.append({
-                'test_type': '遥控器配对测试',
-                'status': 'passed' if ok else 'failed',
-                'duration': round(time.time() - t0, 2), 'steps': [],
-            })
-
-            # 遥控器测试完成后，等待门关闭再进行应急开关测试
-            if ok:
-                logger.info("遥控器测试完成，等待门锁自动关闭...")
-                self._report_progress("等待门锁自动关闭，准备应急开关测试...")
-                # 轮询查询门锁状态，最多等待30秒
-                close_wait_start = time.time()
-                while time.time() - close_wait_start < 30:
-                    current_state = self._query_door_state(timeout=3)
-                    if current_state in ["closed", "locked"]:
-                        logger.info(f"✓ 门锁已关闭，状态: {current_state}")
-                        self._report_progress(f"✓ 门锁已关闭，准备应急开关测试")
-                        break
-                    logger.debug(f"门锁状态: {current_state}，继续等待...")
-                    time.sleep(2)  # 每2秒查询一次
-                else:
-                    logger.warning("等待门锁关闭超时30秒，继续应急开关测试")
-                    self._report_progress("等待门锁关闭超时，继续应急开关测试")
-
+            # 注意：遥控器配对测试放在整个流程最后执行（见阶段三）。
+            # 它会让门锁保持开启，而后续测试项都不依赖门锁处于关闭状态，
+            # 放到最后就无需再等门锁自动落锁，可省去约30秒等待。
             self._report_test_item("emergency_switch", "testing")
             t0 = time.time()
             ok = self.test_emergency_switch(timeout=10, report_callback=report_callback)
@@ -352,6 +330,22 @@ class TestEngine:
                     'duration': round(time.time() - t0, 2), 'steps': new_steps,
                 })
 
+            # ── 阶段三：遥控器配对（放最后，测完即结束，无需等门锁落锁）─────
+            self._report_test_item("remote_pairing", "testing")
+            t0 = time.time()
+            ok = self.test_remote_pairing(pairing_duration=2000, open_timeout=10,
+                                          report_callback=report_callback)
+            self._report_test_item("remote_pairing", "passed" if ok else "failed")
+            if report_callback:
+                report_callback("hide_dialog", 0)
+            if not ok:
+                failed_tests.append("遥控器配对测试")
+            self.result.sub_results.append({
+                'test_type': '遥控器配对测试',
+                'status': 'passed' if ok else 'failed',
+                'duration': round(time.time() - t0, 2), 'steps': [],
+            })
+
             if failed_tests:
                 fail_message = "以下测试项未通过: " + ", ".join(failed_tests)
                 self._report_progress(f"\n❌ {fail_message}")
@@ -372,9 +366,9 @@ class TestEngine:
     def set_test_item_callback(self, callback: Callable):
         self.on_test_item_callback = callback
 
-    def test_remote_pairing(self, pairing_duration: int = 3000, open_timeout: int = 8,
+    def test_remote_pairing(self, pairing_duration: int = 2000, open_timeout: int = 8,
                             report_callback: Callable = None, initial_state: str = None) -> bool:
-        self._report_progress("【步骤4】测试遥控器配对")
+        self._report_progress("测试遥控器配对")
 
         # 清除离线标志和遥控器事件标志
         self.device_offline_event.clear()
@@ -441,23 +435,42 @@ class TestEngine:
 
         self.result.add_step("等待配对响应", True)
 
-        # 阶段一：配对倒计时（pairing_duration），提示按配对键，等待 remote_pairing_result
-        # 注意：设备会在配对窗口结束后才发送结果通知，所以等待时间需要比 duration 长
-        pairing_timeout = int(pairing_duration / 1000) + 3  # 额外等待3秒接收结果通知
-        logger.info(f"等待遥控器配对结果，超时时间: {pairing_timeout}秒")
-        self._report_progress(f"请按遥控器配对键...")
+        # 阶段一：等待 remote_pairing_result
+        # 设备时序：先 GPIO8 保持 pairing_duration，之后才开 10 秒 GPIO3 采集窗口，
+        # 窗口结束才发结果通知。所以超时必须覆盖 duration + 采集窗口 + 传输余量，
+        # 不能按 duration 推算，否则会在设备出结论前就误判失败。
+        prepare_secs = int(pairing_duration / 1000)
+        pairing_timeout = (prepare_secs + self.PAIRING_KEY_WINDOW_SECS
+                           + self.PAIRING_RESULT_MARGIN_SECS)
+        logger.info(
+            f"等待遥控器配对结果: 准备{prepare_secs}秒 + 采集窗口"
+            f"{self.PAIRING_KEY_WINDOW_SECS}秒(需按{self.PAIRING_REQUIRED_PRESSES}次)"
+            f" + 余量{self.PAIRING_RESULT_MARGIN_SECS}秒, 超时{pairing_timeout}秒")
+        self._report_progress(
+            f"配对准备中，请稍候后连续按遥控器配对键 {self.PAIRING_REQUIRED_PRESSES} 次...")
 
-        pairing_secs = int(pairing_duration / 1000)
         pairing_result_received = False
+        key_window_announced = False
         start_time = time.time()
 
         while time.time() - start_time < pairing_timeout:
-            elapsed = int(time.time() - start_time)
-            remaining = pairing_secs - elapsed
+            elapsed = time.time() - start_time
 
-            # 配对倒计时显示（只在配对窗口期间显示）
-            if remaining > 0 and report_callback:
-                report_callback("pairing_countdown", remaining)
+            # 两阶段倒计时：GPIO8 准备期按键无效，之后才是真正的采集窗口
+            if report_callback:
+                if elapsed < prepare_secs:
+                    remaining = prepare_secs - int(elapsed)
+                    if remaining > 0:
+                        report_callback("pairing_prepare", remaining)
+                else:
+                    key_remaining = (prepare_secs + self.PAIRING_KEY_WINDOW_SECS
+                                     - int(elapsed))
+                    if key_remaining > 0:
+                        if not key_window_announced:
+                            key_window_announced = True
+                            self._report_progress(
+                                f"请连续按遥控器配对键 {self.PAIRING_REQUIRED_PRESSES} 次")
+                        report_callback("pairing_countdown", key_remaining)
 
             # 检查是否收到配对结果
             if self.remote_pairing_result is not None:
@@ -468,15 +481,26 @@ class TestEngine:
                     self.result.add_step("遥控器配对", True, "配对成功")
                     break
                 else:
-                    logger.error(f"✗ 遥控器配对失败: {self.remote_pairing_result}")
-                    self.result.add_step("遥控器配对", False, f"配对失败: {self.remote_pairing_result}")
+                    # 设备侧 timeout 绝大多数是采集窗口内按键次数不够（highs=1/3），
+                    # 把要求次数写进原因，避免只看到 "timeout" 无从下手
+                    reason = f"配对失败: {self.remote_pairing_result}"
+                    if self.remote_pairing_result == "timeout":
+                        reason += (f"（设备未在{self.PAIRING_KEY_WINDOW_SECS}秒窗口内采集到"
+                                   f"{self.PAIRING_REQUIRED_PRESSES}次按键，请确认连续按满"
+                                   f"{self.PAIRING_REQUIRED_PRESSES}次）")
+                    logger.error(f"✗ 遥控器配对失败: {reason}")
+                    self._report_progress(f"✗ {reason}")
+                    self.result.add_step("遥控器配对", False, reason)
                     return False
 
             time.sleep(0.5)
 
         # 如果配对超时仍未收到结果
         if not pairing_result_received:
-            self.result.add_step("遥控器配对", False, f"{pairing_timeout}秒内未收到配对结果")
+            reason = f"{pairing_timeout}秒内未收到设备配对结果通知"
+            logger.error(f"✗ {reason}")
+            self._report_progress(f"✗ {reason}")
+            self.result.add_step("遥控器配对", False, reason)
             return False
 
         # 阶段二：开门倒计时（open_timeout），等待 remote_open 事件
@@ -507,7 +531,10 @@ class TestEngine:
             time.sleep(0.1)
 
         if not open_success:
-            self.result.add_step("遥控器开门", False, f"{open_timeout}秒内未收到遥控器开门事件")
+            reason = f"{open_timeout}秒内未收到遥控器开门事件"
+            logger.error(f"✗ {reason}")
+            self._report_progress(f"✗ {reason}")
+            self.result.add_step("遥控器开门", False, reason)
             return False
 
         self.result.add_step("遥控器开门", True, "遥控器开门成功")
@@ -515,9 +542,9 @@ class TestEngine:
         return True
 
     def test_emergency_switch(self, timeout: int = 10, report_callback: Callable = None) -> bool:
-        self._report_progress("【步骤3】测试应急开关功能")
+        self._report_progress("测试应急开关功能")
 
-        # 无条件强制上锁（因为设备状态可能不准确，且通常在遥控器测试后门是开的）
+        # 无条件强制上锁（设备上报状态可能不准，单项测试时门也可能是开的）
         logger.info("应急开关测试前，强制上锁确保初始状态")
         self._report_progress("强制上锁，准备应急开关测试...")
 

@@ -81,8 +81,11 @@ class TestThread(QThread):
     def _report_callback(self, event_type: str, countdown: int):
         if event_type == "emergency_countdown":
             self.countdown_signal.emit("请按应急开关", countdown)
+        elif event_type == "pairing_prepare":
+            # GPIO8 准备期，此时按键设备采集不到，别让操作员白按
+            self.countdown_signal.emit("配对准备中  请勿按键", countdown)
         elif event_type == "pairing_countdown":
-            self.countdown_signal.emit("请按遥控器配对键", countdown)
+            self.countdown_signal.emit("请连续按遥控器配对键 3 次", countdown)
         elif event_type == "open_countdown":
             self.countdown_signal.emit("配对完成  请按遥控器开门", countdown)
         elif event_type == "hide_dialog":
@@ -139,8 +142,11 @@ class SingleTestThread(QThread):
     def _report_callback(self, event_type: str, countdown: int):
         if event_type == "emergency_countdown":
             self.countdown_signal.emit("请按应急开关", countdown)
+        elif event_type == "pairing_prepare":
+            # GPIO8 准备期，此时按键设备采集不到，别让操作员白按
+            self.countdown_signal.emit("配对准备中  请勿按键", countdown)
         elif event_type == "pairing_countdown":
-            self.countdown_signal.emit("请按遥控器配对键", countdown)
+            self.countdown_signal.emit("请连续按遥控器配对键 3 次", countdown)
         elif event_type == "open_countdown":
             self.countdown_signal.emit("配对完成  请按遥控器开门", countdown)
         elif event_type == "hide_dialog":

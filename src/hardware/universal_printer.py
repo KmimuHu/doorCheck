@@ -231,18 +231,33 @@ class UniversalPrinter:
         sn_font_h = sn_cfg.get('font_height', 35)
         sn_font_w = sn_cfg.get('font_width', 24)
 
+        # 加粗宽度(点)：ZPL 内置字体无加粗指令，用偏移重复打印模拟
+        default_bold = self.zpl_layout.get('bold_width', 2)
+
+        def draw_bold_field(x, y, font, font_h, font_w, text, bold_width):
+            out = ""
+            offsets = [(0, 0)]
+            if bold_width and bold_width > 0:
+                b = int(bold_width)
+                offsets += [(dx, dy)
+                            for dx in range(0, b + 1)
+                            for dy in range(0, b + 1)
+                            if (dx, dy) != (0, 0)]
+            for dx, dy in offsets:
+                out += f"^FO{x + dx},{y + dy}\n"
+                out += f"^A{font}N,{font_h},{font_w}\n"
+                out += f"^FD{text}^FS\n"
+            return out
+
         # 日期
-        # 使用 ^A<font> 指定内置点阵字体(A~H，非加粗)，避免 ^CF0 默认矢量字体
-        # (CG Triumvirate Bold Condensed) 带来的加粗效果
+        # 使用 ^A<font> 指定内置点阵字体(A~H)
         date_str = datetime.now().strftime("%Y/%m/%d")
-        zpl += f"^FO{date_x},{date_y}\n"
-        zpl += f"^A{date_font}N,{date_font_h},{date_font_w}\n"
-        zpl += f"^FD{date_str}^FS\n"
+        zpl += draw_bold_field(date_x, date_y, date_font, date_font_h, date_font_w,
+                               date_str, date_cfg.get('bold_width', default_bold))
 
         # 序列号
-        zpl += f"^FO{sn_x},{sn_y}\n"
-        zpl += f"^A{sn_font}N,{sn_font_h},{sn_font_w}\n"
-        zpl += f"^FDSN: {sn}^FS\n"
+        zpl += draw_bold_field(sn_x, sn_y, sn_font, sn_font_h, sn_font_w,
+                               f"SN: {sn}", sn_cfg.get('bold_width', default_bold))
 
         # QR码（^FD 首字符为纠错等级，与 TSPL 模板保持一致）
         zpl += f"^FO{qr_x},{qr_y}\n"
@@ -305,18 +320,29 @@ class UniversalPrinter:
                     logger.error(f"加载字体失败({font_path}): {e}")
             return ImageFont.load_default()
 
+        # 加粗宽度(点)：0=不加粗，越大越粗。可全局设置，也可按字段单独覆盖
+        default_bold = self.zpl_layout.get('bold_width', 2)
+
+        def draw_bold_text(xy, text, font, bold_width):
+            """描边方式实现加粗，热敏/热转印下比单笔画更清晰"""
+            if bold_width and bold_width > 0:
+                draw.text(xy, text, font=font, fill=0,
+                          stroke_width=int(bold_width), stroke_fill=0)
+            else:
+                draw.text(xy, text, font=font, fill=0)
+
         # 日期
         date_cfg = self.zpl_layout.get('date', {})
         date_str = datetime.now().strftime("%Y/%m/%d")
         dfont = load_font(date_cfg.get('font_size', 40))
-        draw.text((date_cfg.get('x', 300), date_cfg.get('y', 388)),
-                  date_str, font=dfont, fill=0)
+        draw_bold_text((date_cfg.get('x', 300), date_cfg.get('y', 388)),
+                       date_str, dfont, date_cfg.get('bold_width', default_bold))
 
         # SN
         sn_cfg = self.zpl_layout.get('sn', {})
         sfont = load_font(sn_cfg.get('font_size', 40))
-        draw.text((sn_cfg.get('x', 77), sn_cfg.get('y', 512)),
-                  f"SN: {sn}", font=sfont, fill=0)
+        draw_bold_text((sn_cfg.get('x', 77), sn_cfg.get('y', 512)),
+                       f"SN: {sn}", sfont, sn_cfg.get('bold_width', default_bold))
 
         # 二维码
         qr_cfg = self.zpl_layout.get('qrcode', {})

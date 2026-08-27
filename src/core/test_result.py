@@ -31,6 +31,10 @@ class TestResult:
             "message": message,
             "timestamp": time.time()
         })
+        # 失败步骤必须落盘：此前只入内存 list，导致排查时日志里没有任何失败记录，
+        # 只能靠设备侧事件反推失败原因
+        if not success:
+            logger.warning(f"步骤失败 [{step_name}]" + (f": {message}" if message else ""))
 
     def set_passed(self):
         self.status = TestStatus.PASSED
