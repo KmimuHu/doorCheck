@@ -1,6 +1,6 @@
 app:
   name: 智能设备产测工具
-  version: '2.13'
+  version: '2.14'
 device:
   heartbeat_interval: 30
   product_id: '1696'
@@ -55,18 +55,18 @@ printer:
     font_path: assets/fonts/label.ttf   # 位图渲染使用的字体文件(相对工程根目录或绝对路径)
     bold_width: 1              # 加粗描边宽度(点)，0=不加粗；各字段可用同名键单独覆盖
     date:
-      font_size: 44
-      x: 370
-      y: 405
+      font_size: 49
+      x: 300
+      y: 340
     qrcode:
       error_correction: M
-      box_size: 14            # 每个二维码模块的点数(越大二维码越大)
-      x: 815
-      y: 300
+      box_size: 15            # 每个二维码模块的点数(越大二维码越大)
+      x: 750
+      y: 220
     sn:
-      font_size: 44
-      x: 136
-      y: 545
+      font_size: 53
+      x: 37
+      y: 472
 test:
   ble_rssi_threshold: -70
   discover_duration: 5000
