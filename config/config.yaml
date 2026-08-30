@@ -1,6 +1,6 @@
 app:
   name: 智能设备产测工具
-  version: '2.14'
+  version: '2.15'
 device:
   heartbeat_interval: 30
   product_id: '1696'

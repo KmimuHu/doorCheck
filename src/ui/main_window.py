@@ -218,12 +218,18 @@ class MainWindow(QMainWindow):
         self.init_ui()
         self.init_menu()
         self.connect_signals()
+
+        # 优化：并行启动网络服务，减少初始化时间
         self.start_mqtt_broker()
         self.start_http_server()
+        self.start_tftp_server()
+
+        # 等待MQTT Broker和HTTP服务就绪后再启动设备发现
+        time.sleep(0.3)  # 短暂等待服务启动
+
         self.start_device_discovery()
         self.init_broadcast_mqtt()
         self.start_heartbeat_monitor()
-        self.start_tftp_server()
 
     def init_ui(self):
         self.setWindowTitle(f'智能设备产测工具 - 门控模式 v{self.config.app_version}')
@@ -1030,7 +1036,7 @@ class MainWindow(QMainWindow):
         query_msg = QueryStatusMessage(self.config.device_psk)
 
         if existing_client and existing_client.connected:
-            response = existing_client.request(query_msg.to_json(), query_msg.mid, timeout=2)
+            response = existing_client.request(query_msg.to_json(), query_msg.mid, timeout=0.5)
             if response and response.get('header', {}).get('code', 0) == 0:
                 logger.debug(f"设备 {device.sn} 在线校验通过（已有MQTT连接）")
                 return True
@@ -1038,7 +1044,7 @@ class MainWindow(QMainWindow):
             logger.debug(f"设备 {device.sn} query超时，但MQTT已连接，认为设备在线")
             return True
 
-        # 创建临时探测客户端，缩短超时时间以加快离线设备的检测
+        # 创建临时探测客户端，大幅缩短超时时间以加快设备发现
         probe_client = MQTTClient(
             self._get_local_broker_ip(),
             self.config.mqtt_port,
@@ -1047,13 +1053,13 @@ class MainWindow(QMainWindow):
             client_id_prefix=f"doorcheck_probe_{uuid.uuid4().hex[:8]}"
         )
         try:
-            # 连接超时从3秒缩短到2秒
-            if not probe_client.connect(timeout=2):
+            # 连接超时缩短到0.5秒，加快发现速度
+            if not probe_client.connect(timeout=0.5):
                 logger.debug(f"设备 {device.sn} MQTT连接失败，判定为离线")
                 return False
 
-            # query超时从3秒缩短到2秒
-            response = probe_client.request(query_msg.to_json(), query_msg.mid, timeout=2)
+            # query超时缩短到0.5秒，设备若已通过mDNS+HTTP配置请求，则必在线
+            response = probe_client.request(query_msg.to_json(), query_msg.mid, timeout=0.5)
             if response and response.get('header', {}).get('code', 0) == 0:
                 logger.debug(f"设备 {device.sn} 在线校验通过（query响应正常）")
                 return True
@@ -1478,8 +1484,8 @@ class MainWindow(QMainWindow):
         thread.start()
 
     def _validate_device_online_worker(self, device_sn: str, generation: int):
-        max_attempts = 3  # 减少重试次数，从6次改为3次
-        retry_delay = 1.5  # 减少重试延迟，从2秒改为1.5秒
+        max_attempts = 1  # 优化：只尝试1次，设备通过HTTP配置请求即可认为在线
+        retry_delay = 0.5  # 优化：如果需要重试，延迟缩短到0.5秒
         try:
             for attempt in range(max_attempts):
                 if generation != self.discovery_generation:
