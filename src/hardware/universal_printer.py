@@ -35,6 +35,9 @@ class UniversalPrinter:
         """
         self.printer_name = None
         self.dpi = 600
+        # zpl_layout 里的坐标/字号按此 DPI 标定，实际渲染时按 dpi/design_dpi 等比缩放。
+        # 换打印机只需改 dpi，不用重标坐标。
+        self.design_dpi = 600
         self.protocol = None
         self.paper_width = 50
         self.paper_height = 30
@@ -67,6 +70,7 @@ class UniversalPrinter:
             # Config 对象 - 使用点号路径
             self.printer_name = config.get('printer.printer_name', None)
             self.dpi = config.get('printer.dpi', 600)
+            self.design_dpi = config.get('printer.design_dpi', 600) or 600
             self.protocol = config.get('printer.protocol', None)
             self.paper_width = config.get('printer.paper_width', 50)
             self.paper_height = config.get('printer.paper_height', 30)
@@ -77,6 +81,7 @@ class UniversalPrinter:
             printer_cfg = config.get('printer', {})
             self.printer_name = printer_cfg.get('printer_name', None)
             self.dpi = printer_cfg.get('dpi', 600)
+            self.design_dpi = printer_cfg.get('design_dpi', 600) or 600
             self.protocol = printer_cfg.get('protocol', None)
             self.paper_width = printer_cfg.get('paper_width', 50)
             self.paper_height = printer_cfg.get('paper_height', 30)
@@ -297,7 +302,8 @@ class UniversalPrinter:
     def _render_label_bitmap(self, sn: str):
         """用 PIL 渲染整张标签的可变内容(日期/SN/二维码)为 1-bit 位图
 
-        返回 PIL Image(模式 '1')；坐标系与 ZPL 点坐标一致(600dpi)。
+        返回 PIL Image(模式 '1')。zpl_layout 坐标按 design_dpi 标定，
+        渲染时按 dpi/design_dpi 缩放到当前打印机分辨率。
         仅渲染可变字段，预印内容由标签纸自带。
         """
         from PIL import Image, ImageDraw, ImageFont
@@ -305,6 +311,18 @@ class UniversalPrinter:
 
         label_w = int(self.paper_width * self.dpi / 25.4)
         label_h = int(self.paper_height * self.dpi / 25.4)
+
+        # 布局坐标按 design_dpi 标定，换算到当前打印机 DPI
+        scale = self.dpi / self.design_dpi if self.design_dpi else 1.0
+        if scale != 1.0:
+            logger.info(
+                f"标签布局按 DPI 缩放: {self.design_dpi} -> {self.dpi} "
+                f"(系数 {scale:.3f}), 画布 {label_w}x{label_h}"
+            )
+
+        def s(value, minimum=1):
+            """按 DPI 比例缩放尺寸/坐标，minimum 防止塌缩到 0"""
+            return max(minimum, int(round(value * scale)))
 
         # 白底(1-bit: 255=白/不打印, 0=黑/打印)
         img = Image.new('1', (label_w, label_h), 1)
@@ -323,6 +341,11 @@ class UniversalPrinter:
         # 加粗宽度(点)：0=不加粗，越大越粗。可全局设置，也可按字段单独覆盖
         default_bold = self.zpl_layout.get('bold_width', 2)
 
+        def scaled_bold(cfg):
+            """加粗宽度随 DPI 缩放；配置为 0 时保持不加粗"""
+            raw = cfg.get('bold_width', default_bold)
+            return s(raw, 0) if raw else 0
+
         def draw_bold_text(xy, text, font, bold_width):
             """描边方式实现加粗，热敏/热转印下比单笔画更清晰"""
             if bold_width and bold_width > 0:
@@ -334,15 +357,15 @@ class UniversalPrinter:
         # 日期
         date_cfg = self.zpl_layout.get('date', {})
         date_str = datetime.now().strftime("%Y/%m/%d")
-        dfont = load_font(date_cfg.get('font_size', 40))
-        draw_bold_text((date_cfg.get('x', 300), date_cfg.get('y', 388)),
-                       date_str, dfont, date_cfg.get('bold_width', default_bold))
+        dfont = load_font(s(date_cfg.get('font_size', 40)))
+        draw_bold_text((s(date_cfg.get('x', 300), 0), s(date_cfg.get('y', 388), 0)),
+                       date_str, dfont, scaled_bold(date_cfg))
 
         # SN
         sn_cfg = self.zpl_layout.get('sn', {})
-        sfont = load_font(sn_cfg.get('font_size', 40))
-        draw_bold_text((sn_cfg.get('x', 77), sn_cfg.get('y', 512)),
-                       f"SN: {sn}", sfont, sn_cfg.get('bold_width', default_bold))
+        sfont = load_font(s(sn_cfg.get('font_size', 40)))
+        draw_bold_text((s(sn_cfg.get('x', 77), 0), s(sn_cfg.get('y', 512), 0)),
+                       f"SN: {sn}", sfont, scaled_bold(sn_cfg))
 
         # 二维码
         qr_cfg = self.zpl_layout.get('qrcode', {})
@@ -355,13 +378,30 @@ class UniversalPrinter:
         qr = qrcode.QRCode(
             error_correction=ecc_map.get(qr_cfg.get('error_correction', 'M'),
                                          qrcode.constants.ERROR_CORRECT_M),
-            box_size=qr_cfg.get('box_size', 9),
+            box_size=s(qr_cfg.get('box_size', 9)),
             border=0,
         )
         qr.add_data(sn)
         qr.make(fit=True)
         qr_img = qr.make_image(fill_color='black', back_color='white').convert('1')
-        img.paste(qr_img, (qr_cfg.get('x', 770), qr_cfg.get('y', 300)))
+
+        qr_x = s(qr_cfg.get('x', 770), 0)
+        qr_y = s(qr_cfg.get('y', 300), 0)
+
+        # 低 DPI 下二维码可能超出画布，缩到放得下为止，避免被整块裁掉
+        avail_w, avail_h = label_w - qr_x, label_h - qr_y
+        if avail_w <= 0 or avail_h <= 0:
+            logger.error(f"二维码起点({qr_x},{qr_y})已在画布({label_w}x{label_h})外，跳过绘制")
+            return img
+        if qr_img.width > avail_w or qr_img.height > avail_h:
+            fit = min(avail_w / qr_img.width, avail_h / qr_img.height)
+            new_size = (max(1, int(qr_img.width * fit)), max(1, int(qr_img.height * fit)))
+            logger.warning(
+                f"二维码 {qr_img.size} 超出可用区域 {avail_w}x{avail_h}，缩放到 {new_size}"
+            )
+            qr_img = qr_img.resize(new_size, Image.NEAREST)
+
+        img.paste(qr_img, (qr_x, qr_y))
 
         return img
 
@@ -391,6 +431,16 @@ class UniversalPrinter:
         label_h = int(self.paper_height * self.dpi / 25.4)
 
         img = self._render_label_bitmap(sn)
+
+        # 全白位图说明布局坐标落在画布外或渲染失败，此时打出来是空标签。
+        # mode '1' 下 0=黑/打印、1=白；getextrema()[0] != 0 表示一个黑点都没有
+        if img.getextrema()[0] != 0:
+            logger.error(
+                f"渲染结果为空白位图，打印将输出空标签！"
+                f"画布 {label_w}x{label_h} (dpi={self.dpi}, design_dpi={self.design_dpi})，"
+                f"请检查 zpl_layout 坐标是否超出画布"
+            )
+
         gfa = self._bitmap_to_gfa(img)
 
         zpl = "^XA\n"

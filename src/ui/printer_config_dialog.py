@@ -160,21 +160,24 @@ class PrinterConfigDialog(QDialog):
         """打印机选择改变时的处理"""
         if not printer_name:
             return
-        
+
         # 自动检测协议
         detected_protocol = self._guess_protocol(printer_name)
-        
+
         # 推荐DPI
         recommended_dpi = self._recommend_dpi(printer_name, detected_protocol)
-        
+
+        # 自动更新 DPI 控件为推荐值
+        self.dpi_spin.setValue(recommended_dpi)
+
         # 更新信息标签
         info_parts = []
         info_parts.append(f"📌 打印机: {printer_name}")
         info_parts.append(f"🔍 检测协议: {detected_protocol}")
         info_parts.append(f"💡 推荐DPI: {recommended_dpi}")
-        
+
         self.info_label.setText('\n'.join(info_parts))
-        
+
         # 如果当前选择的是自动检测，更新协议显示
         if self.protocol_combo.currentIndex() == 0:
             if detected_protocol == 'ZPL':
@@ -202,7 +205,7 @@ class PrinterConfigDialog(QDialog):
     def _recommend_dpi(self, printer_name: str, protocol: str) -> int:
         """推荐DPI设置"""
         name_lower = printer_name.lower()
-        
+
         # 从打印机名称提取DPI信息
         if '600' in name_lower or '600dpi' in name_lower:
             return 600
@@ -210,12 +213,10 @@ class PrinterConfigDialog(QDialog):
             return 300
         elif '203' in name_lower or '203dpi' in name_lower:
             return 203
-        
-        # 按协议推荐默认DPI
-        if protocol == 'ZPL':
-            return 600  # Zebra 常用 600 DPI
-        else:
-            return 203  # Xprinter/TSC 常用 203 DPI
+
+        # 按协议推荐默认DPI（统一默认 600 DPI）
+        # 现代标签打印机通常支持 600 DPI，更清晰
+        return 600
 
     def test_print(self):
         """测试打印"""

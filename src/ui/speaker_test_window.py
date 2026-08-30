@@ -917,7 +917,10 @@ class TestStatusIndicator(QWidget):
 
 class TestWindowPanel(QFrame):
     """单个测试窗口面板"""
-    
+
+    # 信号：线程安全地更新打印按钮状态
+    update_print_button_signal = pyqtSignal(bool)
+
     def __init__(self, panel_id, main_window, parent=None):
         super().__init__(parent)
         self.panel_id = panel_id
@@ -932,6 +935,10 @@ class TestWindowPanel(QFrame):
         self.stop_flag = threading.Event()  # 测试停止标志
         self.log_capture = None  # 当前测试的日志捕获器
         self.layout_mode = 4  # 默认4宫格布局
+
+        # 连接信号到槽，确保线程安全
+        self.update_print_button_signal.connect(self._set_print_button_enabled)
+
         self.setup_ui()
 
     def log_test(self, message: str):
@@ -1308,7 +1315,30 @@ class TestWindowPanel(QFrame):
                 )
             except Exception as e:
                 logger.error(f"保存测试记录失败: {e}")
-    
+
+        # 更新打印按钮状态
+        self._update_print_button_state()
+
+    def _update_print_button_state(self):
+        """根据测试状态更新打印按钮：只有全部测试通过才能打印。
+        线程安全：通过信号机制确保在主线程中执行 UI 更新。"""
+        if '打印' not in self.test_buttons:
+            return
+
+        # 检查所有测试项状态
+        all_passed = all(
+            indicator.status == "passed"
+            for indicator in self.status_indicators.values()
+        )
+
+        # 发射信号，由主线程的槽函数处理
+        self.update_print_button_signal.emit(all_passed)
+
+    def _set_print_button_enabled(self, enabled):
+        """槽函数：在主线程中更新打印按钮状态"""
+        if '打印' in self.test_buttons:
+            self.test_buttons['打印'].setEnabled(enabled)
+
     def copy_device_sn(self):
         """复制设备SN到剪贴板"""
         if self.device:
@@ -1399,6 +1429,8 @@ class TestWindowPanel(QFrame):
             
             for btn in self.test_buttons.values():
                 btn.setEnabled(True)
+            # 设备连接后立即更新打印按钮状态（根据测试项结果）
+            self._update_print_button_state()
 
             if self.speaker_type == 'outdoor':
                 # 延迟启动视频流，给设备RTSP服务一些启动时间
@@ -2118,7 +2150,19 @@ class TestWindowPanel(QFrame):
             self.update_test_status('正式', 'failed')
 
     def print_label(self):
-        """打印标签"""
+        """打印标签（检查所有测试项通过后才允许打印）"""
+        # 检查所有测试项是否全部通过
+        all_passed = all(
+            indicator.status == "passed"
+            for indicator in self.status_indicators.values()
+        )
+        if not all_passed:
+            QMessageBox.warning(
+                self, '无法打印',
+                '只有全部测试项通过后才能打印标签。\n请先完成所有测试项。'
+            )
+            return
+
         threading.Thread(target=self._print_label_impl, daemon=True).start()
     
     def _print_label_impl(self):
@@ -3315,17 +3359,32 @@ class SpeakerTestWindow(QMainWindow):
         total = len(devices)
         success_count = 0
         fail_count = 0
+        skipped_count = 0  # 跳过的设备数（测试未全部通过）
 
         for i, device in enumerate(devices, 1):
             try:
+                # 检查该设备的测试记录是否全部通过
+                records = self.test_db.query_by_sn(device.sn)
+                if not records:
+                    logger.warning(f"设备 {device.sn} 没有测试记录，跳过打印 ({i}/{total})")
+                    skipped_count += 1
+                    fail_count += 1
+                    continue
+
+                # 检查是否所有测试项都通过
+                all_passed = all(record.get('results') == 'PASS' for record in records)
+                if not all_passed:
+                    logger.warning(f"设备 {device.sn} 测试未全部通过，跳过打印 ({i}/{total})")
+                    skipped_count += 1
+                    fail_count += 1
+                    continue
+
                 logger.info(f"正在打印第 {i}/{total} 个设备: {device.sn}")
 
                 # 先上传测试结果
                 upload_service = UploadService()
-                records = self.test_db.query_by_sn(device.sn)
-                if records:
-                    logger.info(f"上传设备 {device.sn} 的测试结果: {len(records)}条")
-                    upload_service.upload_records(records, self.check_type)
+                logger.info(f"上传设备 {device.sn} 的测试结果: {len(records)}条")
+                upload_service.upload_records(records, self.check_type)
 
                 # 打印标签
                 success = self.label_printer.print_label(device.sn, "PASSED")
@@ -3344,7 +3403,7 @@ class SpeakerTestWindow(QMainWindow):
                 fail_count += 1
                 logger.error(f"打印设备 {device.sn} 标签时发生异常: {e}")
 
-        logger.info(f"批量打印完成: 成功 {success_count} 个，失败 {fail_count} 个")
+        logger.info(f"批量打印完成: 成功 {success_count} 个，失败/跳过 {fail_count} 个（其中 {skipped_count} 个因测试未通过被跳过）")
 
         # 发送信号到主线程显示完成弹窗
         self.batch_print_completed_signal.emit(success_count, fail_count)
@@ -3881,7 +3940,18 @@ class SpeakerTestWindow(QMainWindow):
         config_path = get_resource_path('config/config.yaml')
 
         dialog = PrinterConfigDialog(config_path, self)
-        dialog.exec_()
+
+        if dialog.exec_() == QDialog.Accepted:
+            # 配置已保存，重新加载配置和打印机实例。
+            # UniversalPrinter 在 __init__ 里把 printer_name/protocol/dpi 拷进实例属性，
+            # 不重建实例的话改了配置也不生效。
+            self.config.load_config()
+            self.label_printer = LabelPrinter(self.config)
+            logger.info(
+                f"打印机配置已更新: {self.label_printer.printer_name}, "
+                f"{self.label_printer.protocol}, {self.label_printer.dpi} DPI"
+            )
+            self.statusBar().showMessage('打印机配置已更新', 3000)
 
     def open_broker_config(self):
         """打开远程Broker配置对话框"""
