@@ -1,6 +1,6 @@
 app:
   name: 智能设备产测工具
-  version: '2.16'
+  version: '2.17'
 device:
   heartbeat_interval: 30
   product_id: '1696'
@@ -61,7 +61,7 @@ printer:
       y: 340
     qrcode:
       error_correction: M
-      box_size: 15
+      size_mm: 13.3
       x: 750
       y: 220
     sn:

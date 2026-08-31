@@ -1,17 +1,19 @@
 import os
 import sys
-import logging
 from datetime import datetime
 from typing import Optional
 
-# 只在Windows平台导入win32print
+import qrcode
+from PIL import Image, ImageDraw, ImageFont
+
+# 使用统一的 logger，确保日志能被记录
+from ..utils.logger import logger
+
+# win32print 只在 Windows 存在，非 Windows 下置 None，由调用处报错
 if sys.platform == 'win32':
     import win32print
 else:
     win32print = None
-
-# 使用统一的 logger，确保日志能被记录
-from ..utils.logger import logger
 
 
 class UniversalPrinter:
@@ -306,9 +308,6 @@ class UniversalPrinter:
         渲染时按 dpi/design_dpi 缩放到当前打印机分辨率。
         仅渲染可变字段，预印内容由标签纸自带。
         """
-        from PIL import Image, ImageDraw, ImageFont
-        import qrcode
-
         label_w = int(self.paper_width * self.dpi / 25.4)
         label_h = int(self.paper_height * self.dpi / 25.4)
 
@@ -367,7 +366,9 @@ class UniversalPrinter:
         draw_bold_text((s(sn_cfg.get('x', 77), 0), s(sn_cfg.get('y', 512), 0)),
                        f"SN: {sn}", sfont, scaled_bold(sn_cfg))
 
-        # 二维码
+        # 二维码：外框尺寸恒定，SN 变长只增加模块密度，不改变二维码大小。
+        # 不能用"每模块固定像素"(box_size)：那样 QR 版本每升一级外框就放大 19%，
+        # 预印标签上的白框会放不下。这里按目标物理尺寸反算模块大小。
         qr_cfg = self.zpl_layout.get('qrcode', {})
         ecc_map = {
             'L': qrcode.constants.ERROR_CORRECT_L,
@@ -375,34 +376,81 @@ class UniversalPrinter:
             'Q': qrcode.constants.ERROR_CORRECT_Q,
             'H': qrcode.constants.ERROR_CORRECT_H,
         }
-        qr = qrcode.QRCode(
-            error_correction=ecc_map.get(qr_cfg.get('error_correction', 'M'),
-                                         qrcode.constants.ERROR_CORRECT_M),
-            box_size=s(qr_cfg.get('box_size', 9)),
-            border=0,
-        )
-        qr.add_data(sn)
-        qr.make(fit=True)
-        qr_img = qr.make_image(fill_color='black', back_color='white').convert('1')
+        ecc = ecc_map.get(qr_cfg.get('error_correction', 'M'),
+                          qrcode.constants.ERROR_CORRECT_M)
 
         qr_x = s(qr_cfg.get('x', 770), 0)
         qr_y = s(qr_cfg.get('y', 300), 0)
 
-        # 低 DPI 下二维码可能超出画布，缩到放得下为止，避免被整块裁掉
         avail_w, avail_h = label_w - qr_x, label_h - qr_y
         if avail_w <= 0 or avail_h <= 0:
             logger.error(f"二维码起点({qr_x},{qr_y})已在画布({label_w}x{label_h})外，跳过绘制")
             return img
-        if qr_img.width > avail_w or qr_img.height > avail_h:
-            fit = min(avail_w / qr_img.width, avail_h / qr_img.height)
-            new_size = (max(1, int(qr_img.width * fit)), max(1, int(qr_img.height * fit)))
+
+        target_px = self._qr_target_px(qr_cfg, scale)
+        if target_px > min(avail_w, avail_h):
+            clamped = min(avail_w, avail_h)
             logger.warning(
-                f"二维码 {qr_img.size} 超出可用区域 {avail_w}x{avail_h}，缩放到 {new_size}"
+                f"二维码目标 {target_px} 点超出可用区域 {avail_w}x{avail_h}，收到 {clamped} 点"
             )
-            qr_img = qr_img.resize(new_size, Image.NEAREST)
+            target_px = clamped
 
-        img.paste(qr_img, (qr_x, qr_y))
+        img.paste(self._render_qr_fixed_size(sn, target_px, ecc), (qr_x, qr_y))
 
+        return img
+
+    def _qr_target_px(self, qr_cfg: dict, scale: float) -> int:
+        """二维码目标外框边长(点)
+
+        以 size_mm 为准，与 DPI 无关。仅配了旧的 box_size 时按版本1(21模块)折算，
+        保证老配置打出来的实际尺寸不变，不会因为升级而撑破预印白框。
+        """
+        if 'size_mm' in qr_cfg:
+            return max(1, int(round(float(qr_cfg['size_mm']) * self.dpi / 25.4)))
+        if 'box_size' in qr_cfg:
+            legacy = max(1, int(round(float(qr_cfg['box_size']) * scale))) * 21
+            logger.warning(
+                f"zpl_layout.qrcode.box_size 已废弃(每模块像素数，SN 变长会整体放大)，"
+                f"按版本1折算为 {legacy} 点，建议改用 size_mm"
+            )
+            return legacy
+        return max(1, int(round(15 * self.dpi / 25.4)))
+
+    @staticmethod
+    def _render_qr_fixed_size(data: str, size_px: int, error_correction):
+        """把二维码光栅化进固定 size_px 的方框
+
+        模块边界按比例取整后落在像素网格上：外框恒为 size_px，相邻模块边长最多差 1 点，
+        且全程不做位图重采样，模块边缘保持锐利（resize 会让边缘错位、掉扫码率）。
+        """
+        qr = qrcode.QRCode(error_correction=error_correction, border=0)
+        qr.add_data(data)
+        qr.make(fit=True)
+        matrix = qr.get_matrix()
+        n = len(matrix)
+
+        if size_px < n:
+            logger.error(f"二维码目标 {size_px} 点装不下 {n}x{n} 模块，已撑到 {n} 点")
+            size_px = n
+        elif size_px < n * 2:
+            logger.warning(
+                f"二维码每模块不足 2 点({size_px}/{n})，扫码率可能下降，"
+                f"建议增大 size_mm 或缩短 SN"
+            )
+
+        img = Image.new('1', (size_px, size_px), 1)
+        draw = ImageDraw.Draw(img)
+        edges = [round(i * size_px / n) for i in range(n + 1)]
+        for r, row in enumerate(matrix):
+            y0, y1 = edges[r], edges[r + 1]
+            for c, is_dark in enumerate(row):
+                if is_dark:
+                    draw.rectangle([edges[c], y0, edges[c + 1] - 1, y1 - 1], fill=0)
+
+        logger.info(
+            f"二维码: 版本{qr.version} {n}x{n} 模块, 外框 {size_px}x{size_px} 点 "
+            f"(每模块 {size_px / n:.2f} 点)"
+        )
         return img
 
     @staticmethod
