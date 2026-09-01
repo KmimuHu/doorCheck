@@ -11,7 +11,7 @@ from datetime import datetime
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from src.network.mqtt_client import MQTTClient
-from src.core.protocol_message import OpenDoorMessage, CloseDoorMessage
+from src.core.protocol import OpenDoorMessage, CloseDoorMessage
 from src.utils.config import Config
 
 
