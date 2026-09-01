@@ -331,6 +331,10 @@ class VideoWidget(QWidget):
         self.retry_count = 0
         self.max_retries = 3
 
+        # 防止短时间内重复启动（修复崩溃问题）
+        self.last_start_time = 0
+        self.min_start_interval = 1.0  # 最小启动间隔1秒
+
         # 使用DPI缩放尺寸
         min_width = UIStyles.scale_size(320)
         min_height = UIStyles.scale_size(240)
@@ -408,6 +412,13 @@ class VideoWidget(QWidget):
         self.device_ip = None
         
     def start_rtsp_stream(self, device_ip, retry_count=0):
+        # 防止短时间内重复启动
+        current_time = time.time()
+        if current_time - self.last_start_time < self.min_start_interval:
+            logger.warning(f"[视频流] 启动间隔过短 ({current_time - self.last_start_time:.2f}秒)，跳过本次启动")
+            return False
+        self.last_start_time = current_time
+
         self.stop_stream()
         self.device_ip = device_ip
         self.retry_button.hide()
@@ -417,6 +428,13 @@ class VideoWidget(QWidget):
             self.retry_count = 0
         else:
             self.retry_count = retry_count
+
+        # 检查是否超过最大重试次数
+        if self.retry_count >= self.max_retries:
+            logger.error(f"[视频流] 已达到最大重试次数 ({self.max_retries})，停止重试")
+            self.video_label.setText(f'❌ 视频流连接失败\\n已重试{self.max_retries}次')
+            self.retry_button.show()
+            return False
 
         rtsp_url = f'rtsp://admin:weidian_24h@{device_ip}/camera0/main'
 
@@ -1385,6 +1403,11 @@ class TestWindowPanel(QFrame):
         if device is None and self.device is not None:
             logger.info(f"窗口{self.panel_id + 1}设备断开，停止所有测试")
             self.stop_flag.set()  # 设置停止标志
+
+            # 停止视频流（修复设备断电后视频画面卡住的问题）
+            if self.video_widget:
+                self.video_widget.stop_stream()
+                logger.info(f"窗口{self.panel_id + 1}已停止视频流")
         elif device is not None:
             self.stop_flag.clear()  # 清除停止标志
 
@@ -1469,13 +1492,18 @@ class TestWindowPanel(QFrame):
     
     def set_speaker_type(self, speaker_type):
         """设置音箱类型"""
+        # 如果类型相同，无需重新设置
+        if self.speaker_type == speaker_type:
+            logger.debug(f"窗口{self.panel_id + 1}设备类型已经是 {speaker_type}，跳过重复设置")
+            return
+
         self.speaker_type = speaker_type
         self.setup_buttons_and_indicators_for_type(speaker_type)
-        
+
         # 先停止视频流，避免冲突
         if speaker_type == 'indoor':
             self.video_widget.show_default_image()
-        
+
         # 重新绑定设备会根据speaker_type自动处理视频流
         if self.device:
             current_device = self.device
@@ -2238,6 +2266,14 @@ class SpeakerTestWindow(QMainWindow):
         # 记录版本查询失败的设备，避免无限重试
         self.version_query_failed: set = set()
 
+        # HTTP 心跳检测机制（修复设备断电后不自动消失的问题）
+        self.device_last_seen: dict = {}  # {sn: timestamp} 记录设备最后在线时间
+        self.heartbeat_timeout = 3  # 心跳超时时间（秒）- 快速检测离线
+        self.heartbeat_check_interval = 2  # 心跳检查间隔（秒）- 高频检测
+
+        # 版本查询防重机制（修复线程泄漏问题）
+        self.version_querying: set = set()  # 正在查询版本的设备SN集合
+
         # P0修复：校时防抖 - 记录已校时的设备及时间戳，避免重复校时
         self.datetime_synced_devices: dict = {}  # {sn: timestamp}
         self.datetime_sync_interval = 300  # 5分钟内不重复校时同一设备
@@ -2258,6 +2294,7 @@ class SpeakerTestWindow(QMainWindow):
         self.start_firmware_server()
         self.start_device_discovery()
         self.start_device_refresh_timer()
+        self.start_device_heartbeat_timer()
 
         # 工具启动10秒后，主动查询所有设备版本（解决重启后版本丢失问题）
         QTimer.singleShot(10000, self._query_all_device_versions)
@@ -3165,6 +3202,13 @@ class SpeakerTestWindow(QMainWindow):
         self.device_refresh_timer.timeout.connect(self.refresh_devices)
         self.device_refresh_timer.start(5000)  # 改为5秒，提高发现频率
         logger.info("设备刷新定时器已启动 (间隔: 5秒)")
+
+    def start_device_heartbeat_timer(self):
+        """启动HTTP心跳检测定时器"""
+        self.device_heartbeat_timer = QTimer()
+        self.device_heartbeat_timer.timeout.connect(self._check_device_heartbeat)
+        self.device_heartbeat_timer.start(self.heartbeat_check_interval * 1000)
+        logger.info(f"设备心跳检测定时器已启动 (间隔: {self.heartbeat_check_interval}秒, 超时: {self.heartbeat_timeout}秒)")
     
     def on_select_all_changed(self, state):
         """全选/取消全选"""
@@ -3525,7 +3569,63 @@ class SpeakerTestWindow(QMainWindow):
             self.listener.refresh_all_devices(self.zeroconf, self.config.mdns_service_type)
         except Exception as e:
             logger.error(f"刷新设备列表失败: {e}")
-    
+
+    def _check_device_heartbeat(self):
+        """HTTP心跳检测：定期检查设备是否在线"""
+        import requests
+        current_time = time.time()
+        offline_devices = []
+
+        for device in list(self.devices):
+            sn = device.sn
+
+            # 检查设备是否分配到窗口
+            bound_panel = next((panel for panel in self.test_panels if panel.device and panel.device.sn == sn), None)
+
+            # 检查设备是否正在执行测试（log_capture不为None表示正在测试）
+            is_testing = bound_panel and bound_panel.log_capture is not None
+
+            if is_testing:
+                # 正在测试的设备，更新心跳时间（避免误判离线）
+                self.device_last_seen[sn] = current_time
+                logger.debug(f"设备 {sn} 正在测试，跳过心跳检测")
+                continue
+
+            last_seen = self.device_last_seen.get(sn, 0)
+
+            # 新发现的设备，记录首次在线时间
+            if last_seen == 0:
+                self.device_last_seen[sn] = current_time
+                continue
+
+            # 检查是否超时
+            if current_time - last_seen > self.heartbeat_timeout:
+                # TCP连接探活（1秒超时，不解析响应内容）
+                try:
+                    url = f"http://{device.ip}:8080/hi"
+                    response = requests.get(url, timeout=1)
+
+                    # 只要HTTP请求成功（状态码200-399），就认为在线
+                    if response.status_code < 400:
+                        self.device_last_seen[sn] = current_time
+                        logger.debug(f"设备 {sn} ({device.ip}) HTTP探活成功 (status={response.status_code})")
+                    else:
+                        # HTTP状态码错误，判定离线
+                        offline_devices.append(sn)
+                        logger.warning(f"设备 {sn} ({device.ip}) HTTP状态码错误 (status={response.status_code})，判定离线")
+                except requests.exceptions.Timeout:
+                    # 请求超时，判定离线
+                    offline_devices.append(sn)
+                    logger.warning(f"设备 {sn} ({device.ip}) HTTP探活超时，判定离线")
+                except requests.exceptions.RequestException as e:
+                    # 连接失败，判定离线
+                    offline_devices.append(sn)
+                    logger.warning(f"设备 {sn} ({device.ip}) HTTP探活异常: {type(e).__name__}，判定离线")
+
+        # 移除离线设备
+        for device_sn in offline_devices:
+            self.device_removed_signal.emit(device_sn)
+
     def on_device_found(self, device: DeviceInfo):
         self.device_found_signal.emit(device)
     
@@ -3585,6 +3685,9 @@ class SpeakerTestWindow(QMainWindow):
                     logger.info(f"发现新设备 {device.sn}，触发版本查询")
                     self._query_device_versions(device)
 
+        # 更新设备最后在线时间（心跳检测）
+        self.device_last_seen[device.sn] = time.time()
+
         # 更新设备列表显示
         self.update_device_list()
 
@@ -3593,6 +3696,23 @@ class SpeakerTestWindow(QMainWindow):
         self.devices = [d for d in self.devices if d.sn != device_sn]
         # 清理版本缓存
         self.device_versions.pop(device_sn, None)
+        # 清理心跳记录
+        self.device_last_seen.pop(device_sn, None)
+        # 清理校时记录（修复设备重新上下电后不会重新校时的问题）
+        self.datetime_synced_devices.pop(device_sn, None)
+
+        # 从mDNS listener缓存中移除，防止refresh时重新添加
+        if self.listener:
+            with self.listener._lock:
+                # 查找并移除该设备的service name
+                names_to_remove = []
+                for name, cached_device in list(self.listener.discovered_devices.items()):
+                    if cached_device.sn == device_sn:
+                        names_to_remove.append(name)
+
+                for name in names_to_remove:
+                    self.listener.discovered_devices.pop(name, None)
+                    logger.info(f"已从mDNS缓存移除设备: {name}")
 
         # 从窗口中移除设备
         for panel in self.test_panels:
@@ -3616,17 +3736,25 @@ class SpeakerTestWindow(QMainWindow):
 
     def _query_device_versions(self, device: DeviceInfo):
         """后台 HTTP 查询设备 kernel/rootfs 版本，完成后刷新卡片列表"""
+        # 防重：如果该设备正在查询版本，跳过
+        if device.sn in self.version_querying:
+            logger.debug(f"[版本查询] 设备 {device.sn} 已在查询队列中，跳过重复查询")
+            return
+
+        # 标记为正在查询
+        self.version_querying.add(device.sn)
         logger.info(f"[版本查询] 启动查询线程: {device.sn}")
 
         def _run():
-            # 跳过临时IP标识的设备
-            if device.sn.startswith('IP-'):
-                logger.debug(f"设备 {device.sn} 使用临时标识，跳过版本查询")
-                return
-
-            logger.info(f"[版本查询] 等待2秒后开始查询: {device.sn}")
-            time.sleep(2)  # 等待设备HTTP服务就绪
             try:
+                # 跳过临时IP标识的设备
+                if device.sn.startswith('IP-'):
+                    logger.debug(f"设备 {device.sn} 使用临时标识，跳过版本查询")
+                    return
+
+                logger.info(f"[版本查询] 等待2秒后开始查询: {device.sn}")
+                time.sleep(2)  # 等待设备HTTP服务就绪
+
                 logger.info(f"[版本查询] 创建HTTP客户端: {device.sn} ({device.ip})")
                 http_client = SpeakerHTTPClient(device.ip, port=8080)
 
@@ -3681,6 +3809,10 @@ class SpeakerTestWindow(QMainWindow):
                 logger.error(f"[版本查询] 异常: {device.sn} -> {e}")
                 # 异常情况也记录到失败集合
                 self.version_query_failed.add(device.sn)
+            finally:
+                # 无论成功还是失败，都要移除查询标记
+                self.version_querying.discard(device.sn)
+                logger.debug(f"[版本查询] 完成，移除查询标记: {device.sn}")
 
         threading.Thread(target=_run, daemon=True).start()
 
