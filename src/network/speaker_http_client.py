@@ -513,11 +513,13 @@ class SpeakerHTTPClient:
         return self._get("/api/audio/ai/volume", {"volume_db": volume_db})
     
     def mic_record_play(self, duration: int = 5) -> Optional[Dict]:
-        return self._get("/api/audio/mic_record_play", {"duration": duration})
+        # 录音需要duration秒 + 播放duration秒 + 设备处理时间，预留充足超时
+        return self._get("/api/audio/mic_record_play", {"duration": duration}, timeout=duration * 2 + 15)
 
     def play_audio(self) -> Optional[Dict]:
         """播放音频测试喇叭"""
-        return self._get("/api/audio/play")
+        # 播放音频需要等待音频播放完成，预留充足超时
+        return self._get("/api/audio/play", timeout=15)
 
     def set_factory(self) -> Optional[Dict]:
         """设置为出厂模式"""
