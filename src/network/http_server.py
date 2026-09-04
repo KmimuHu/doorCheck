@@ -1,6 +1,8 @@
 from flask import Flask, jsonify, request
 from typing import Dict
 import socket
+import threading
+from werkzeug.serving import make_server
 from ..utils.logger import logger
 
 
@@ -14,6 +16,8 @@ class ConfigServer:
         self.secret_key = secret_key
         self.broker_mode = broker_mode  # 新增：broker模式（local/remote）
         self.on_device_config_callback = on_device_config_callback  # 回调函数：(sn, product_id) -> None
+        self.server = None
+        self.server_thread = None
         self._setup_routes()
     
     def _get_local_ip(self):
@@ -101,5 +105,26 @@ class ConfigServer:
             return jsonify({"status": "ok"})
     
     def start(self):
-        logger.info(f"HTTP配置服务启动: {self.host}:{self.port}")
-        self.app.run(host=self.host, port=self.port, threaded=True, debug=False)
+        """启动HTTP服务器（非阻塞）"""
+        try:
+            self.server = make_server(self.host, self.port, self.app, threaded=True)
+            self.server_thread = threading.Thread(target=self.server.serve_forever, daemon=True)
+            self.server_thread.start()
+            logger.info(f"HTTP配置服务启动: {self.host}:{self.port}")
+        except Exception as e:
+            logger.error(f"HTTP服务器启动失败: {e}")
+
+    def stop(self):
+        """停止HTTP服务器"""
+        if self.server:
+            try:
+                logger.info("正在停止HTTP配置服务...")
+                self.server.shutdown()
+                if self.server_thread:
+                    self.server_thread.join(timeout=2)
+                logger.info("HTTP配置服务已停止")
+            except Exception as e:
+                logger.error(f"停止HTTP服务器失败: {e}")
+            finally:
+                self.server = None
+                self.server_thread = None

@@ -81,6 +81,7 @@ class VideoStreamThread(QThread):
         self.frame_size = width * height * 3
         self.running = False
         self.skip_initial_frames = 5  # 跳过前5帧，等待清晰的关键帧
+        self._lock = threading.Lock()  # 保护 ffmpeg_process 访问
 
     def run(self):
         """工作线程：循环读取ffmpeg输出"""
@@ -89,7 +90,15 @@ class VideoStreamThread(QThread):
         first_frame = True
 
         try:
-            while self.running and self.ffmpeg_process and self.ffmpeg_process.poll() is None:
+            while self.running:
+                # 线程安全地检查进程状态
+                with self._lock:
+                    if not self.ffmpeg_process:
+                        break
+                    if self.ffmpeg_process.poll() is not None:
+                        break
+                    process = self.ffmpeg_process
+
                 # 检查超时（首帧15秒，后续10秒无数据）
                 timeout = 15.0 if first_frame else 10.0
                 if time.time() - last_frame_time > timeout:
@@ -99,15 +108,18 @@ class VideoStreamThread(QThread):
 
                 try:
                     # 阻塞读取（在工作线程中安全）
-                    raw_frame = self.ffmpeg_process.stdout.read(self.frame_size)
+                    # 使用短超时避免长时间阻塞
+                    raw_frame = process.stdout.read(self.frame_size)
 
                     if len(raw_frame) == 0:
                         # 管道关闭，读取stderr获取错误信息
                         stderr_output = ""
                         try:
-                            stderr_output = self.ffmpeg_process.stderr.read().decode('utf-8', errors='ignore')
-                            if stderr_output:
-                                logger.error(f"ffmpeg错误输出: {stderr_output[-500:]}")  # 只记录最后500字符
+                            with self._lock:
+                                if self.ffmpeg_process:
+                                    stderr_output = self.ffmpeg_process.stderr.read().decode('utf-8', errors='ignore')
+                                    if stderr_output:
+                                        logger.error(f"ffmpeg错误输出: {stderr_output[-500:]}")  # 只记录最后500字符
                         except Exception as e:
                             logger.warning(f"无法读取ffmpeg错误输出: {e}")
 
@@ -136,8 +148,9 @@ class VideoStreamThread(QThread):
                                 logger.info("初始帧跳过完成，开始显示清晰画面")
                             continue
 
-                        # 发送帧到主线程
-                        self.frame_ready.emit(raw_frame)
+                        # 只在线程仍在运行时发送帧
+                        if self.running:
+                            self.frame_ready.emit(raw_frame)
                     else:
                         # 不完整数据
                         logger.warning(f"读取到不完整帧: {len(raw_frame)}/{self.frame_size}")
@@ -150,14 +163,22 @@ class VideoStreamThread(QThread):
 
         except Exception as e:
             logger.error(f"视频流线程异常: {e}")
-            self.stream_error.emit(str(e))
+            if self.running:
+                self.stream_error.emit(str(e))
         finally:
             self.running = False
+            # 清空进程引用，避免悬挂指针
+            with self._lock:
+                self.ffmpeg_process = None
 
     def stop(self):
         """停止线程"""
         self.running = False
-        self.wait(2000)  # 等待最多2秒
+        # 清空进程引用
+        with self._lock:
+            self.ffmpeg_process = None
+        # 等待线程结束，但不要等太久
+        self.wait(1000)  # 最多等待1秒
 
 
 # 现代化UI样式配置
@@ -550,34 +571,38 @@ class VideoWidget(QWidget):
                 self.retry_button.show()
     
     def stop_stream(self):
-        # 停止视频流线程
-        if self.video_stream_thread and self.video_stream_thread.isRunning():
-            self.video_stream_thread.stop()
-            self.video_stream_thread = None
-        
-        # 终止ffmpeg进程
+        """停止视频流（关键：先停止进程，再停止线程）"""
+        # 1. 先终止 ffmpeg 进程（这会让线程的 read() 操作返回）
         if self.ffmpeg_process:
             try:
                 # 先尝试正常终止
                 self.ffmpeg_process.terminate()
                 try:
-                    self.ffmpeg_process.wait(timeout=1)
+                    self.ffmpeg_process.wait(timeout=0.5)
                 except subprocess.TimeoutExpired:
                     # 超时则强制杀死
                     self.ffmpeg_process.kill()
                     try:
-                        self.ffmpeg_process.wait(timeout=1)  # kill后也加超时
+                        self.ffmpeg_process.wait(timeout=0.5)
                     except subprocess.TimeoutExpired:
-                        # kill都超时，直接放弃等待，避免永久阻塞
+                        # kill都超时，直接放弃等待
                         logger.warning("ffmpeg进程无法终止，放弃等待")
             except Exception as e:
-                logger.debug(f"停止视频流异常: {e}")
+                logger.debug(f"停止ffmpeg进程异常: {e}")
                 try:
                     self.ffmpeg_process.kill()
                 except:
                     pass
             finally:
                 self.ffmpeg_process = None
+
+        # 2. 再停止视频流线程（此时 ffmpeg 已经停止，线程会安全退出）
+        if self.video_stream_thread and self.video_stream_thread.isRunning():
+            self.video_stream_thread.stop()
+            # 不要立即设为 None，等线程真正结束
+            if not self.video_stream_thread.wait(1000):
+                logger.warning("视频流线程未能在1秒内结束")
+            self.video_stream_thread = None
 
     def show_fullsize_video(self):
         if not self.zoom_dialog:
@@ -1972,51 +1997,74 @@ class TestWindowPanel(QFrame):
             if self.stop_flag.is_set():
                 logger.info(f"窗口{self.panel_id + 1}设备已断开，停止红外测试")
                 return
-            
+
             self.update_test_status('红外', 'testing')
             logger.info(f"窗口{self.panel_id + 1}开始红外测试")
 
             ir_strict = Config().ir_strict_verify
             ir_signal_matched = False
 
-            # 尝试读取串口信号
+            # 尝试读取串口信号（使用全局串口管理器）
             try:
-                from ..utils.serial_reader import SerialReader
+                from ..utils.serial_manager import SerialManager
                 import time
 
-                serial_reader = SerialReader()
+                serial_manager = SerialManager()
 
-                # 启动后台监听线程
-                if serial_reader.start_listening():
-                    logger.info("后台监听已启动，发送红外信号")
+                # 获取串口读取器（阻塞等待，最多30秒）
+                logger.info(f"窗口{self.panel_id + 1}等待获取串口资源...")
+                serial_reader = serial_manager.acquire_serial_reader(timeout=30)
 
-                    # 发送红外信号
+                if serial_reader is None:
+                    logger.error(f"窗口{self.panel_id + 1}获取串口超时，其他窗口可能正在使用")
+                    # 超时后按非强校验模式处理
                     result = self.http_client.send_ir_blaster("0x4B", "0x45")
-                    logger.info("红外信号已发送，等待接收器响应")
-
-                    # 等待5秒让后台线程接收数据
-                    time.sleep(5)
-
-                    # 停止监听并获取数据
-                    received = serial_reader.stop_listening()
-                    serial_reader.close()
-                    if received:
-                        logger.info(f"红外接收到信号值: {received}")
-                        ir_signal_matched = any(sig == EXPECTED_IR_SIGNAL for sig in received)
-                        if ir_signal_matched:
-                            logger.info(f"红外信号校验通过，匹配预期值: {EXPECTED_IR_SIGNAL}")
-                        else:
-                            logger.warning(f"红外信号校验失败，预期: {EXPECTED_IR_SIGNAL}，实际: {received}")
+                    if not ir_strict and result and result.get('code') == 0:
+                        logger.warning(f"窗口{self.panel_id + 1}串口不可用，但HTTP发送成功，非强校验模式通过")
+                        self.update_test_status('红外', 'passed')
                     else:
-                        logger.warning("红外测试期间未接收到串口信号")
-                else:
-                    logger.warning("后台监听启动失败，跳过信号读取")
-                    result = self.http_client.send_ir_blaster("0x4B", "0x45")
+                        logger.error(f"窗口{self.panel_id + 1}串口不可用，红外测试失败")
+                        self.update_test_status('红外', 'failed')
+                    return
+
+                try:
+                    logger.info(f"窗口{self.panel_id + 1}已获取串口资源，开始测试")
+
+                    # 启动后台监听线程
+                    if serial_reader.start_listening():
+                        logger.info(f"窗口{self.panel_id + 1}后台监听已启动，发送红外信号")
+
+                        # 发送红外信号
+                        result = self.http_client.send_ir_blaster("0x4B", "0x45")
+                        logger.info(f"窗口{self.panel_id + 1}红外信号已发送，等待接收器响应")
+
+                        # 等待5秒让后台线程接收数据
+                        time.sleep(5)
+
+                        # 停止监听并获取数据
+                        received = serial_reader.stop_listening()
+                        if received:
+                            logger.info(f"窗口{self.panel_id + 1}红外接收到信号值: {received}")
+                            ir_signal_matched = any(sig == EXPECTED_IR_SIGNAL for sig in received)
+                            if ir_signal_matched:
+                                logger.info(f"窗口{self.panel_id + 1}红外信号校验通过，匹配预期值: {EXPECTED_IR_SIGNAL}")
+                            else:
+                                logger.warning(f"窗口{self.panel_id + 1}红外信号校验失败，预期: {EXPECTED_IR_SIGNAL}，实际: {received}")
+                        else:
+                            logger.warning(f"窗口{self.panel_id + 1}红外测试期间未接收到串口信号")
+                    else:
+                        logger.warning(f"窗口{self.panel_id + 1}后台监听启动失败，跳过信号读取")
+                        result = self.http_client.send_ir_blaster("0x4B", "0x45")
+                finally:
+                    # 释放串口资源，让其他窗口可以使用
+                    serial_manager.release_serial_reader()
+                    logger.info(f"窗口{self.panel_id + 1}已释放串口资源")
+
             except ImportError:
                 logger.warning("未安装pyserial库，跳过串口信号读取")
                 result = self.http_client.send_ir_blaster("0x4B", "0x45")
             except Exception as e:
-                logger.warning(f"串口读取失败: {e}")
+                logger.warning(f"窗口{self.panel_id + 1}串口读取失败: {e}")
                 result = self.http_client.send_ir_blaster("0x4B", "0x45")
 
             # 判断红外测试结果
@@ -4100,32 +4148,95 @@ class SpeakerTestWindow(QMainWindow):
 
     def closeEvent(self, event):
         """关闭窗口时清理资源"""
-        # 停止所有窗口的视频流
-        for panel in self.test_panels:
-            if panel.video_widget:
-                panel.video_widget.stop_stream()
-        
-        # 停止定时器
-        if self.device_refresh_timer:
-            self.device_refresh_timer.stop()
-            logger.info("设备刷新定时器已停止")
-        if self.device_heartbeat_timer:
-            self.device_heartbeat_timer.stop()
-            logger.info("设备心跳定时器已停止")
-        if self.scan_timeout_timer:
-            self.scan_timeout_timer.stop()
+        logger.info("音箱测试窗口退出，开始清理资源...")
 
-        # 停止固件HTTP服务
-        if self.firmware_server:
-            self.firmware_server.stop()
+        # 1. 停止所有窗口的视频流
+        try:
+            for panel in self.test_panels:
+                if panel.video_widget:
+                    panel.video_widget.stop_stream()
+            logger.info("所有视频流已停止")
+        except Exception as e:
+            logger.error(f"停止视频流失败: {e}")
 
-        # 停止MQTT和mDNS服务
-        if self.mqtt_broker:
-            self.mqtt_broker.stop()
-        if self.master_mdns:
-            self.master_mdns.unregister()
-        if self.zeroconf:
-            self.zeroconf.close()
-        
-        logger.info("应用程序已关闭")
+        # 2. 停止定时器
+        try:
+            if self.device_refresh_timer:
+                self.device_refresh_timer.stop()
+                logger.info("设备刷新定时器已停止")
+            if self.device_heartbeat_timer:
+                self.device_heartbeat_timer.stop()
+                logger.info("设备心跳定时器已停止")
+            if self.scan_timeout_timer:
+                self.scan_timeout_timer.stop()
+                logger.info("扫描超时定时器已停止")
+        except Exception as e:
+            logger.error(f"停止定时器失败: {e}")
+
+        # 3. 断开所有MQTT连接
+        try:
+            if hasattr(self, 'mqtt_clients') and self.mqtt_clients:
+                for mqtt_client in self.mqtt_clients.values():
+                    mqtt_client.disconnect()
+                self.mqtt_clients.clear()
+                logger.info("所有MQTT客户端已断开")
+        except Exception as e:
+            logger.error(f"断开MQTT连接失败: {e}")
+
+        # 4. 停止mDNS服务发现（关键：按正确顺序清理）
+        try:
+            # 先停止 ServiceBrowser
+            if hasattr(self, 'browser') and self.browser:
+                self.browser.cancel()
+                logger.info("mDNS ServiceBrowser 已停止")
+                time.sleep(0.2)  # 给 ServiceBrowser 时间完成清理
+
+            # 再注销 mDNS 服务
+            if hasattr(self, 'master_mdns') and self.master_mdns:
+                self.master_mdns.unregister()
+                logger.info("mDNS 服务已注销")
+                time.sleep(0.2)  # 给注销操作时间完成
+
+            # 最后关闭 Zeroconf
+            if hasattr(self, 'zeroconf') and self.zeroconf:
+                self.zeroconf.close()
+                logger.info("Zeroconf 已关闭")
+                time.sleep(0.3)  # 确保UDP端口完全释放
+        except Exception as e:
+            logger.error(f"清理Zeroconf资源失败: {e}")
+
+        # 5. 停止HTTP配置服务
+        if hasattr(self, 'config_server') and self.config_server:
+            try:
+                self.config_server.stop()
+                logger.info("HTTP配置服务已停止")
+            except Exception as e:
+                logger.error(f"停止HTTP配置服务失败: {e}")
+
+        # 6. 停止固件HTTP服务
+        if hasattr(self, 'firmware_server') and self.firmware_server:
+            try:
+                self.firmware_server.stop()
+                logger.info("固件HTTP服务已停止")
+            except Exception as e:
+                logger.error(f"停止固件HTTP服务失败: {e}")
+
+        # 7. 停止MQTT Broker
+        if hasattr(self, 'mqtt_broker') and self.mqtt_broker:
+            try:
+                self.mqtt_broker.stop()
+                logger.info("MQTT Broker已停止")
+            except Exception as e:
+                logger.error(f"停止MQTT Broker失败: {e}")
+
+        # 8. 关闭串口资源
+        try:
+            from ..utils.serial_manager import SerialManager
+            serial_manager = SerialManager()
+            serial_manager.close_all()
+            logger.info("串口资源已关闭")
+        except Exception as e:
+            logger.error(f"关闭串口资源失败: {e}")
+
+        logger.info("音箱测试窗口所有资源清理完成")
         event.accept()

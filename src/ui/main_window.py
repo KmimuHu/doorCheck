@@ -1733,18 +1733,75 @@ class MainWindow(QMainWindow):
     # Close
     # ---------------------------------------------------------------
     def closeEvent(self, event):
+        logger.info("程序退出，开始清理资源...")
+
+        # 1. 停止心跳监控
+        try:
+            if hasattr(self, 'heartbeat_timer'):
+                self.heartbeat_timer.stop()
+                logger.info("心跳监控已停止")
+        except Exception as e:
+            logger.error(f"停止心跳监控失败: {e}")
+
+        # 2. 断开所有MQTT连接
         for mqtt_client in self.device_mqtt_clients.values():
-            mqtt_client.disconnect()
+            try:
+                mqtt_client.disconnect()
+            except Exception as e:
+                logger.error(f"断开MQTT客户端失败: {e}")
 
         if self.broadcast_mqtt_client:
-            self.broadcast_mqtt_client.disconnect()
+            try:
+                self.broadcast_mqtt_client.disconnect()
+                logger.info("广播MQTT客户端已断开")
+            except Exception as e:
+                logger.error(f"断开广播MQTT客户端失败: {e}")
 
+        # 3. 停止mDNS服务发现（关键：按正确顺序清理）
+        try:
+            # 先停止 ServiceBrowser
+            if hasattr(self, 'browser') and self.browser:
+                self.browser.cancel()
+                logger.info("ServiceBrowser已停止")
+                time.sleep(0.2)  # 给 ServiceBrowser 时间完成清理
+
+            # 再注销 mDNS 服务
+            if self.master_mdns:
+                self.master_mdns.unregister()
+                logger.info("mDNS服务已注销")
+                time.sleep(0.2)
+
+            # 最后关闭 Zeroconf
+            if self.zeroconf:
+                self.zeroconf.close()
+                logger.info("Zeroconf已关闭")
+                time.sleep(0.3)  # 确保UDP端口完全释放
+        except Exception as e:
+            logger.error(f"清理Zeroconf资源失败: {e}")
+
+        # 4. 停止HTTP配置服务
+        if hasattr(self, 'config_server') and self.config_server:
+            try:
+                self.config_server.stop()
+                logger.info("HTTP配置服务已停止")
+            except Exception as e:
+                logger.error(f"停止HTTP服务失败: {e}")
+
+        # 5. 停止MQTT Broker
         if self.mqtt_broker:
-            self.mqtt_broker.stop()
+            try:
+                self.mqtt_broker.stop()
+                logger.info("MQTT Broker已停止")
+            except Exception as e:
+                logger.error(f"停止MQTT Broker失败: {e}")
+
+        # 6. 停止TFTP服务器
         if self.tftp_server:
-            self.tftp_server.stop()
-        if self.master_mdns:
-            self.master_mdns.unregister()
-        if self.zeroconf:
-            self.zeroconf.close()
+            try:
+                self.tftp_server.stop()
+                logger.info("TFTP服务器已停止")
+            except Exception as e:
+                logger.error(f"停止TFTP服务器失败: {e}")
+
+        logger.info("所有资源清理完成")
         event.accept()

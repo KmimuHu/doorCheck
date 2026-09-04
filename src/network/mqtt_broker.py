@@ -63,6 +63,7 @@ class MQTTBrokerManager:
         self.broker = None
         self.loop = None
         self.running = False
+        self.broker_thread = None
 
         logging.getLogger('amqtt').setLevel(logging.WARNING)
 
@@ -138,14 +139,29 @@ class MQTTBrokerManager:
             logger.info(f"MQTT Broker已启动 ({protocol}): {self.host}:{self.port}")
             self.running = True
 
+            # 保持运行直到 running 标志被设为 False
             while self.running:
-                await asyncio.sleep(1)
+                await asyncio.sleep(0.5)
+
+            # 循环退出后，主动关闭 broker
+            logger.debug("开始关闭 MQTT Broker...")
+            if self.broker:
+                await self.broker.shutdown()
+                logger.debug("MQTT Broker shutdown 完成")
 
         except Exception as e:
             logger.error(f"MQTT Broker启动失败: {e}")
             raise
 
     def start(self):
+        """在独立线程中启动 MQTT Broker"""
+        import threading
+        self.broker_thread = threading.Thread(target=self._run_broker, daemon=True)
+        self.broker_thread.start()
+        logger.info("MQTT Broker 线程已启动")
+
+    def _run_broker(self):
+        """在独立线程中运行 broker 的 event loop"""
         try:
             self._cleanup_port()
             # Windows 上 amqtt 需要 SelectorEventLoop（ProactorEventLoop 不支持部分 SSL 操作）
@@ -158,18 +174,39 @@ class MQTTBrokerManager:
         except Exception as e:
             logger.error(f"MQTT Broker运行异常: {e}")
         finally:
-            if self.loop:
+            # 清理 loop
+            if self.loop and not self.loop.is_closed():
+                # 给一点时间让所有任务完成
+                try:
+                    pending = asyncio.all_tasks(self.loop)
+                    for task in pending:
+                        task.cancel()
+                    self.loop.run_until_complete(asyncio.gather(*pending, return_exceptions=True))
+                except:
+                    pass
                 self.loop.close()
-
-    async def _stop_broker(self):
-        if self.broker:
-            await self.broker.shutdown()
+            logger.debug("MQTT Broker event loop 已关闭")
 
     def stop(self):
+        """停止 MQTT Broker"""
+        if not self.running:
+            # 已经停止，避免重复调用
+            return
+
+        logger.info("正在停止 MQTT Broker...")
+
+        # 设置停止标志，让 _start_broker 中的循环退出
         self.running = False
-        if self.broker and self.loop:
-            try:
-                self.loop.run_until_complete(self._stop_broker())
-            except:
-                pass
+
+        # 等待线程结束（broker 会在 _start_broker 循环退出后自动关闭）
+        # 因为是 daemon 线程，即使未完成也不会阻塞程序退出
+        if self.broker_thread and self.broker_thread.is_alive():
+            # 缩短等待时间到 1.5 秒（broker shutdown 通常很快）
+            self.broker_thread.join(timeout=1.5)
+            if self.broker_thread.is_alive():
+                # daemon 线程会在主程序退出时自动终止，所以这只是个提示
+                logger.debug("MQTT Broker 线程仍在运行（守护线程将随主程序退出）")
+            else:
+                logger.debug("MQTT Broker 线程已正常结束")
+
         logger.info("MQTT Broker已停止")
